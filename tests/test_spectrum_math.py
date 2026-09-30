@@ -6,11 +6,12 @@ class SpectrumMathTests(unittest.TestCase):
     def setUpClass(cls):
         try:
             import numpy as np
-            from spectrum_math import analyze_sc16, sc16_to_complex, window_metrics
+            from spectrum_math import analyze_sc16, analyze_sc16_frames, sc16_to_complex, window_metrics
         except ImportError as exc:
             raise unittest.SkipTest(str(exc))
         cls.np = np
         cls.analyze_sc16 = staticmethod(analyze_sc16)
+        cls.analyze_sc16_frames = staticmethod(analyze_sc16_frames)
         cls.sc16_to_complex = staticmethod(sc16_to_complex)
         cls.window_metrics = staticmethod(window_metrics)
 
@@ -36,3 +37,14 @@ class SpectrumMathTests(unittest.TestCase):
         raw = self.np.zeros(n * 2, dtype=self.np.int16)
         result = self.analyze_sc16(raw, n, 0, window, metric='psd', dc_notch=False)
         self.assertTrue(self.np.all(self.np.isfinite(result.values_db)))
+
+    def test_frame_average_preserves_tone_and_reports_all_clips(self):
+        n = 128
+        window = self.np.ones(n)
+        frames = self.np.zeros((3, n * 2), dtype=self.np.int16)
+        frames[:, ::2] = 1024
+        clean = self.analyze_sc16_frames(frames, n, 0, window, dc_notch=False)
+        frames[1, 3] = 32767
+        result = self.analyze_sc16_frames(frames, n, 0, window, dc_notch=False)
+        self.assertEqual(result.clipped_samples, 1)
+        self.assertAlmostEqual(float(clean.peak_db), -6.0206, places=3)

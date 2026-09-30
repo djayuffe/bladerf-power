@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0 — 2026-09-30
+
+- Added `--average-frames` for linear-power averaging across accepted frames.
+- Kept callback capture real-time by batching immutable frame copies in the
+  main loop and preserving ordered worker output.
+- Added CLI validation and regression coverage for averaging and clipping.
+
 ## 0.3.1 — 2026-09-30
 
 - Corrected synthetic DSP test binding so the NumPy-backed CI suite executes

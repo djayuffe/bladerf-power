@@ -110,6 +110,12 @@ shortest time that removes frequency splatter or amplitude transients. The
 software does not claim a hardware PLL lock bit; the epoch/settle method is a
 data-quality barrier.
 
+For noisy signals, `--average-frames N` collects N accepted frames after the
+settle barrier and averages their linear power spectra in the worker. This
+reduces uncorrelated noise while preserving tones, at the cost of N frame
+times per view. Averaging stays outside the callback so the SDR stream remains
+real-time and only complete, epoch-tagged copies enter the worker queue.
+
 ## Heatmap stage
 
 `heatmap.py` scans the input once to determine the time/frequency grid and DB
@@ -129,8 +135,8 @@ time interval is never lost.
 
 - Add a device backend by adapting the RX setup and callback contract; keep
   `analyze_view()` hardware-independent.
-- Add averaging by accumulating copied FFT frames before worker dispatch; do
-  not average inside the hardware callback.
+- Add alternative robust estimators beside the existing linear-power frame
+  average; do not average inside the hardware callback.
 - Add a binary/SigMF writer beside the CSV writer without changing the planner.
 - Add a renderer palette by returning a list of RGB tuples and registering it
   in `palette_parse()`.

@@ -47,7 +47,7 @@ except ImportError:  # allow --help and --version without DSP dependencies
 def get_args():
     parser = argparse.ArgumentParser(description='Receive-only bladeRF spectrum survey')
     parser.add_argument('range', metavar='LOWER:UPPER:BIN_WIDTH')
-    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.3.1')
+    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.4.0')
     parser.add_argument('-f', '--file', default='output.csv')
     parser.add_argument('-z', '--compress', action='store_true')
     parser.add_argument('-e', '--exit-timer', default='0')
@@ -68,6 +68,8 @@ def get_args():
                         help='seconds to wait after each retune (default: 0.01)')
     parser.add_argument('--settle-frames', type=int, default=1,
                         help='complete frames to discard after settling (default: 1)')
+    parser.add_argument('--average-frames', type=int, default=1,
+                        help='valid frames to average per view (default: 1)')
     parser.add_argument('--metric', choices=('amplitude', 'power', 'psd'), default='amplitude')
     parser.add_argument('--full-scale', type=float, default=2048.0,
                         help='SC16_Q11 full-scale reference (default: 2048)')
@@ -91,6 +93,7 @@ def get_args():
         '--sample-rate': parsed.sample_rate or parsed.bandwidth,
         '--settle-time': parsed.settle_time,
         '--settle-frames': parsed.settle_frames,
+        '--average-frames': parsed.average_frames,
         '--metric': parsed.metric, '--full-scale': parsed.full_scale,
         '--no-dc-notch': parsed.no_dc_notch, '--iq-gain': parsed.iq_gain,
         '--iq-phase': parsed.iq_phase, '--calibration-db': parsed.calibration_db,
@@ -284,13 +287,16 @@ def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwi
         The timestamp for this buffer
 
     """
-    from spectrum_math import analyze_sc16
-    sample_count = len(data) // 2
+    from spectrum_math import analyze_sc16, analyze_sc16_frames
+    import numpy as np
+    array = np.asarray(data)
+    sample_count = array.shape[-1] // 2
     sample_rate = bin_width * sample_count
     window = window_func(sample_count)
-    result = analyze_sc16(data, sample_rate, center_freq, window, metric,
-                          full_scale, dc_notch, iq_gain, iq_phase_deg,
-                          calibration_db)
+    analyzer = analyze_sc16_frames if array.ndim == 2 else analyze_sc16
+    result = analyzer(array, sample_rate, center_freq, window, metric,
+                      full_scale, dc_notch, iq_gain, iq_phase_deg,
+                      calibration_db)
 
     # Find start/end frequencies that we get from this FFT, and which bins we
     # want to slice out of the DATA array
@@ -309,7 +315,7 @@ def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwi
 
     # Prepare data for CSV-ification
     datestr = datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d, %H:%M:%S')
-    csv_str = "%s, %d, %d, %.2f, %d, "%(datestr, view_start, view_end, bin_width, len(data))
+    csv_str = "%s, %d, %d, %.2f, %d, "%(datestr, view_start, view_end, bin_width, sample_count)
 
     csv_str += ", ".join(["%.2f" % x for x in values]) + "\n"
 
@@ -447,8 +453,11 @@ def main():
     except (ValueError, IndexError):
         sys.stderr.write("ERROR: expected lower:upper:positive_bin_width\n")
         return 2
+    if args['--average-frames'] < 1:
+        sys.stderr.write("ERROR: average frames must be positive\n")
+        return 2
     if args['--dry-run']:
-        print("validated sweep: %.0fHz..%.0fHz, %.3fHz bins, metric=%s, settle=%gs/%d frames" % (start_freq, end_freq, bin_width, args['--metric'], args['--settle-time'], args['--settle-frames']))
+        print("validated sweep: %.0fHz..%.0fHz, %.3fHz bins, metric=%s, settle=%gs/%d frames, average=%d" % (start_freq, end_freq, bin_width, args['--metric'], args['--settle-time'], args['--settle-frames'], args['--average-frames']))
         return 0
     if not 0 < float(args['--filter-margin']) <= 1:
         sys.stderr.write("ERROR: filter margin must be greater than 0 and at most 1\n")
@@ -560,14 +569,19 @@ def main():
         freq_idx = 0
         pending = []
         while exit_timer == 0 or curr_time - start_time <= exit_timer:
-            while True:
-                frame_epoch = q_data.get()
-                if frame_epoch == rx_data['epoch']:
-                    break
+            frame_batch = []
+            while len(frame_batch) < args['--average-frames']:
+                while True:
+                    frame_epoch = q_data.get()
+                    if frame_epoch == rx_data['epoch']:
+                        break
+                # The callback owns and reuses this buffer after the event.
+                frame_batch.append(rx_data['data'].copy())
+                rx_data['data_idx'] = 0
 
             # Now that we have the data, apply it to the pool
             # The callback reuses its buffer; copy before handing it to a worker.
-            analysis_data = rx_data['data'].copy()
+            analysis_data = frame_batch[0] if len(frame_batch) == 1 else array(frame_batch)
             analysis_args = (analysis_data, window_func, freqs[freq_idx][1], device.rx.frequency, fmbw2, bin_width, start_freq, end_freq, curr_time, args['--metric'], args['--full-scale'], not args['--no-dc-notch'], args['--iq-gain'], args['--iq-phase'], args['--calibration-db'])
             pending.append(pool.apply_async(analyze_view, analysis_args))
             if len(pending) >= num_workers:

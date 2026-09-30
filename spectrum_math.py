@@ -95,3 +95,46 @@ def analyze_sc16(raw: np.ndarray, sample_rate: float, center_frequency: float,
     noise_floor = float(np.median(sorted_db)) if sorted_db.size else float("nan")
     return SpectrumResult(sorted_db, sorted_freq, clipped, dc_offset, noise_floor,
                           peak_frequency, peak_db)
+
+
+def analyze_sc16_frames(frames: np.ndarray, sample_rate: float, center_frequency: float,
+                        window: np.ndarray, metric: str = "power",
+                        full_scale: float = 2048.0, dc_notch: bool = True,
+                        iq_gain: float = 1.0, iq_phase_deg: float = 0.0,
+                        calibration_db: float = 0.0) -> SpectrumResult:
+    """Average multiple frames in linear power before converting to dB.
+
+    Linear-power averaging reduces uncorrelated noise approximately with the
+    number of frames while preserving narrowband signals. A single frame is
+    delegated to :func:`analyze_sc16` so the fast path has no extra overhead.
+    """
+    values = np.asarray(frames)
+    if values.ndim == 1:
+        return analyze_sc16(values, sample_rate, center_frequency, window, metric,
+                            full_scale, dc_notch, iq_gain, iq_phase_deg,
+                            calibration_db)
+    if values.ndim != 2 or values.shape[0] < 1:
+        raise ValueError("frames must be a non-empty two-dimensional array")
+    results = [analyze_sc16(frame, sample_rate, center_frequency, window,
+                            "amplitude", full_scale, dc_notch, iq_gain,
+                            iq_phase_deg, 0.0) for frame in values]
+    # The per-frame amplitude spectrum is converted back to linear power
+    # before averaging.  This avoids the bias and information loss caused by
+    # averaging logarithmic values, while retaining the single-frame fast path.
+    power = np.mean([np.square(10.0 ** (result.values_db / 20.0))
+                     for result in results], axis=0)
+    if metric == "amplitude":
+        db = 10.0 * np.log10(np.maximum(power, 1e-30))
+    elif metric in ("power", "psd"):
+        if metric == "psd":
+            _, enbw = window_metrics(np.asarray(window))
+            power = power / (sample_rate * enbw)
+        db = 10.0 * np.log10(np.maximum(power, 1e-30))
+    else:
+        raise ValueError("metric must be amplitude, power, or psd")
+    db += float(calibration_db)
+    peak_index = int(np.argmax(db))
+    return SpectrumResult(db, results[0].frequencies_hz, sum(r.clipped_samples for r in results),
+                          sum(r.dc_offset for r in results) / len(results),
+                          float(np.median(db)), float(results[0].frequencies_hz[peak_index]),
+                          float(db[peak_index]))

@@ -31,6 +31,10 @@ python3 bladerf_power.py 430M:440M:2k --bandwidth 2M --sample-rate 2.4M \
 python3 bladerf_power.py 430M:440M:2k --settle-time 0.02 --settle-frames 2 \
   --file conservative.csv.gz --compress
 
+# Average four accepted frames in linear power for a lower-noise survey
+python3 bladerf_power.py 430M:440M:2k --average-frames 4 \
+  --metric power --file averaged.csv.gz --compress
+
 # Export calibrated PSD instead of amplitude dBFS
 python3 bladerf_power.py 100M:110M:5k --metric psd --calibration-db 2.3 \
   --iq-gain 0.998 --iq-phase -0.4 --file calibrated.csv
@@ -67,6 +71,8 @@ current binding supported by your libbladeRF release.
   calibration offsets.
 - Added configurable ADC sample rate, post-retune settling, and validated FFT
   window selection for more reliable tuning/lock behavior.
+- Added configurable linear-power frame averaging (`--average-frames`) to
+  reduce uncorrelated noise without averaging inside the hardware callback.
 - Asynchronous FFT workers now receive immutable per-frame copies, preventing
   capture/analysis races during fast sweeps.
 - Fixed heatmap frequency slicing, equal-range color scaling, Pillow resampling,

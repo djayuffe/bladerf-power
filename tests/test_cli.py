@@ -28,3 +28,19 @@ class CliTests(unittest.TestCase):
             check=True, capture_output=True, text=True,
         )
         self.assertIn("validated sweep", result.stdout)
+
+    def test_average_frames_is_exposed(self):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "bladerf_power.py"), "100M:110M:1M",
+             "--dry-run", "--average-frames", "4"],
+            check=True, capture_output=True, text=True,
+        )
+        self.assertIn("average=4", result.stdout)
+
+    def test_rejects_zero_average_frames(self):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "bladerf_power.py"), "100M:110M:1M",
+             "--dry-run", "--average-frames", "0"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 2)
