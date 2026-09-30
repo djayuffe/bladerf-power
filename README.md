@@ -114,6 +114,31 @@ python3 heatmap.py 433mhz.csv.gz 433mhz.png \
   --low 433M --high 435M --db -130 -20 --palette extended
 ```
 
+## Validation, benchmark, and auto-configuration advisor
+
+Run the diagnostic tool before a deployment or after changing firmware,
+drivers, host USB topology, or analysis parameters:
+
+```sh
+# Deterministic DSP, SC16_Q11 endpoint, and clipping checks
+bladerf-diagnostics --self-test --json
+
+# Benchmark FFT sizes, windows, metrics, and frame averaging
+bladerf-diagnostics --benchmark --fft-sizes 256,1024,4096 --repeats 5 --json
+
+# Run both suites and include a non-destructive device readback probe
+bladerf-diagnostics --auto-configure --device YOUR_SERIAL --json
+```
+
+The benchmark reports median latency, frames/second, peak level, noise floor,
+and clipped-sample counts for every tested combination. The recommendation is
+chosen only from configurations with no synthetic clipping and is a measured
+throughput/quality suggestion—not a claim that one setting is safe for every
+antenna or RF environment. `--auto-configure` does not transmit, flash
+firmware, or persist gain/rate changes; it combines the synthetic recommendation
+with the device’s current read-back values so an operator can review the
+profile before starting a survey.
+
 ## CLI reference
 
 The positional range is `LOWER:UPPER:BIN_WIDTH`; suffixes `k`, `M`, `G`, `T`,
@@ -186,6 +211,8 @@ sample rate.
 - `ARCHITECTURE.md` — design, tuning, concurrency, and extension notes.
 - `AUDIT.md` — audit history, compatibility boundary, and deliberate limits.
 - `CHANGELOG.md` — release history and user-visible changes.
+- `bladerf_diagnostics.py` — self-test, exhaustive DSP benchmark, clipping
+  sweep, and safe configuration advisor.
 
 ## Safety
 

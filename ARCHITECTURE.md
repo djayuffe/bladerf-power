@@ -30,6 +30,13 @@ The capture and render stages are deliberately independent. Capturing touches
 hardware and can run for hours; rendering is offline, repeatable, and can be
 re-run with different crops, palettes, DB limits, and time compression.
 
+`bladerf_diagnostics.py` is the validation boundary around both stages. Its
+self-test uses deterministic synthetic SC16_Q11 frames; its benchmark sweeps
+FFT sizes, windows, metrics, averaging counts, latency, throughput, noise
+floor, and clipping; its auto-configuration mode combines that result with a
+non-destructive hardware readback. No diagnostic mode transmits or writes
+device firmware.
+
 ## Backend compatibility
 
 The planner and DSP code do not depend on one particular Python binding. The

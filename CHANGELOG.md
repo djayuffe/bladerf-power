@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0 — 2026-09-30
+
+- Added `bladerf-diagnostics` with deterministic DSP self-tests, SC16_Q11
+  clipping/endpoint sweeps, FFT/window/metric/averaging benchmarks, and a
+  ranked safe-configuration advisor.
+- Added non-destructive hardware readback to `--auto-configure` and documented
+  deployment validation and performance tradeoffs.
+- Added CI coverage for diagnostic correctness and recommendation guards.
+
 ## 0.5.1 — 2026-09-30
 
 - Expanded README with project scope, capture workflow, CLI reference, output
