@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1 — 2026-09-30
+
+- Added a receive-only low-level USB throughput benchmark with effective sample
+  rate, payload bytes/second, buffer count, and utilization reporting.
+- Added CLI controls for test duration, ADC rate, buffer size, and device ID.
+- Added hardware-independent validation for unsupported/invalid USB probes.
+
 ## 0.7.0 — 2026-09-30
 
 - Added robust linear-power estimators: median, trimmed mean, and winsorized

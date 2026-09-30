@@ -37,6 +37,12 @@ floor, and clipping; its auto-configuration mode combines that result with a
 non-destructive hardware readback. No diagnostic mode transmits or writes
 device firmware.
 
+Its optional USB test uses the synchronous RX API directly, repeatedly submits
+SC16_Q11 buffers for a bounded interval, and reports delivered samples,
+four-byte complex-sample payload rate, effective readback rate, and utilization.
+It measures transport capacity only; it does not claim RF sensitivity or prove
+that a particular antenna/gain configuration is unclipped.
+
 ## Backend compatibility
 
 The planner and DSP code do not depend on one particular Python binding. The

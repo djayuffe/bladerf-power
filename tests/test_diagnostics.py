@@ -1,6 +1,6 @@
 import unittest
 
-from bladerf_diagnostics import clipping_sweep, recommend, run_self_test
+from bladerf_diagnostics import clipping_sweep, recommend, run_self_test, usb_throughput_test
 
 
 class DiagnosticsTests(unittest.TestCase):
@@ -15,6 +15,14 @@ class DiagnosticsTests(unittest.TestCase):
     def test_recommendation_requires_safe_rows(self):
         rows = []
         self.assertEqual(recommend(rows)["status"], "no-safe-configuration")
+
+    def test_usb_test_validates_without_hardware(self):
+        result = usb_throughput_test(duration=0)
+        self.assertEqual(result["status"], "invalid")
+
+    def test_usb_test_rejects_legacy_module(self):
+        result = usb_throughput_test(duration=0.1, module=object())
+        self.assertEqual(result["status"], "unsupported")
 
 
 if __name__ == "__main__":

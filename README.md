@@ -135,6 +135,10 @@ bladerf-diagnostics --benchmark --fft-sizes 256,1024,4096 --repeats 5 --json
 
 # Run both suites and include a non-destructive device readback probe
 bladerf-diagnostics --auto-configure --device YOUR_SERIAL --json
+
+# Measure receive-only USB delivery at a controlled ADC rate
+bladerf-diagnostics --usb-test --usb-seconds 5 \
+  --usb-rate 2400000 --usb-buffer-size 8192 --device YOUR_SERIAL --json
 ```
 
 The benchmark reports median latency, frames/second, peak level, noise floor,
@@ -145,6 +149,12 @@ antenna or RF environment. `--auto-configure` does not transmit, flash
 firmware, or persist gain/rate changes; it combines the synthetic recommendation
 with the device’s current read-back values so an operator can review the
 profile before starting a survey.
+
+The USB test measures successful SC16_Q11 payload delivery, not RF sensitivity:
+`payload_bytes_per_second` is four bytes per complex sample and
+`rate_utilization` compares delivered samples with the requested ADC rate.
+Run it at several buffer sizes/rates when diagnosing host USB limits, dropped
+buffers, or a capture that cannot sustain its configured rate.
 
 ## CLI reference
 

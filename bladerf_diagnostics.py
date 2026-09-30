@@ -186,6 +186,75 @@ def probe_hardware(identifier: str = "") -> dict:
         return {"status": "unavailable", "error": str(exc)}
 
 
+def usb_throughput_test(identifier: str = "", duration: float = 2.0,
+                        sample_rate: int = 2_400_000, buffer_size: int = 8192,
+                        module=None) -> dict:
+    """Measure receive delivery over USB using the current sync API.
+
+    This is intentionally a transport test, not an RF sensitivity test. It
+    counts successful SC16_Q11 buffers and reports payload throughput. The
+    test stops and closes the device in all cases and never enables TX.
+    """
+    if duration <= 0 or sample_rate <= 0 or buffer_size <= 0:
+        return {"status": "invalid", "error": "duration, rate, and buffer size must be positive"}
+    try:
+        if module is None:
+            try:
+                import bladerf as module
+            except ImportError:
+                return {"status": "unavailable",
+                        "error": "USB benchmark requires the current bladerf Python binding"}
+        if not hasattr(module, "BladeRF"):
+            return {"status": "unsupported",
+                    "error": "USB benchmark requires the synchronous bladerf.BladeRF API"}
+        try:
+            device = module.BladeRF(identifier) if identifier else module.BladeRF()
+        except TypeError:
+            device = module.BladeRF()
+        channel = device.Channel(module.CHANNEL_RX(0))
+        channel.frequency = int(getattr(channel, "frequency", 100_000_000))
+        channel.sample_rate = int(sample_rate)
+        channel.bandwidth = int(min(sample_rate, 2_000_000))
+        if hasattr(channel, "gain_mode") and hasattr(module, "GainMode"):
+            channel.gain_mode = module.GainMode.Manual
+        if hasattr(channel, "gain"):
+            channel.gain = 0
+        device.sync_config(layout=module.ChannelLayout.RX_X1,
+                           fmt=module.Format.SC16_Q11,
+                           num_buffers=16, buffer_size=int(buffer_size),
+                           num_transfers=8, stream_timeout=3500)
+        channel.enable = True
+        raw = bytearray(int(buffer_size) * 4)
+        started = time.perf_counter()
+        calls = 0
+        samples = 0
+        while time.perf_counter() - started < duration:
+            device.sync_rx(raw, int(buffer_size))
+            calls += 1
+            samples += int(buffer_size)
+        elapsed = time.perf_counter() - started
+        return {"status": "ok", "backend": "modern-sync",
+                "requested_sample_rate": int(sample_rate),
+                "readback_sample_rate": int(getattr(channel, "sample_rate", sample_rate)),
+                "buffer_samples": int(buffer_size), "buffers": calls,
+                "samples": samples, "elapsed_seconds": elapsed,
+                "samples_per_second": samples / elapsed,
+                "payload_bytes_per_second": samples * 4 / elapsed,
+                "rate_utilization": samples / elapsed / float(sample_rate)}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+    finally:
+        try:
+            channel.enable = False
+        except (NameError, AttributeError, RuntimeError):
+            pass
+        try:
+            if 'device' in locals() and hasattr(device, "close"):
+                device.close()
+        except Exception:
+            pass
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="bladerf-power validation and benchmark advisor")
     parser.add_argument("--self-test", action="store_true",
@@ -194,14 +263,19 @@ def main(argv=None):
                         help="benchmark FFT/window/metric/averaging combinations")
     parser.add_argument("--auto-configure", action="store_true",
                         help="rank a safe configuration and probe current hardware")
+    parser.add_argument("--usb-test", action="store_true",
+                        help="run a receive-only low-level USB throughput test")
+    parser.add_argument("--usb-seconds", type=float, default=2.0)
+    parser.add_argument("--usb-rate", type=int, default=2_400_000)
+    parser.add_argument("--usb-buffer-size", type=int, default=8192)
     parser.add_argument("--device", default="", help="optional bladeRF identifier for readback")
     parser.add_argument("--fft-sizes", default="256,1024,4096",
                         help="comma-separated benchmark FFT sizes")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     args = parser.parse_args(argv)
-    if not (args.self_test or args.benchmark or args.auto_configure):
-        parser.error("select --self-test, --benchmark, or --auto-configure")
+    if not (args.self_test or args.benchmark or args.auto_configure or args.usb_test):
+        parser.error("select --self-test, --benchmark, --auto-configure, or --usb-test")
     report = {}
     if args.self_test or args.auto_configure:
         report["self_test"] = run_self_test()
@@ -214,6 +288,9 @@ def main(argv=None):
         report["recommendation"] = recommend(rows)
     if args.auto_configure:
         report["hardware"] = probe_hardware(args.device)
+    if args.usb_test:
+        report["usb"] = usb_throughput_test(args.device, args.usb_seconds,
+                                              args.usb_rate, args.usb_buffer_size)
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
