@@ -7,3 +7,4 @@ output*.csv
 output*.csv.gz
 output*.png
 .DS_Store
+*.egg-info/
