@@ -47,7 +47,7 @@ except ImportError:  # allow --help and --version without DSP dependencies
 def get_args():
     parser = argparse.ArgumentParser(description='Receive-only bladeRF spectrum survey')
     parser.add_argument('range', metavar='LOWER:UPPER:BIN_WIDTH')
-    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.2.4')
+    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.2.5')
     parser.add_argument('-f', '--file', default='output.csv')
     parser.add_argument('-z', '--compress', action='store_true')
     parser.add_argument('-e', '--exit-timer', default='0')
@@ -234,7 +234,7 @@ def fft_dbfs(data, window_func, full_scale=SC16_Q11_FULL_SCALE):
     magnitude = maximum(abs(spectrum), 1e-15)
     return 20 * log10(magnitude)
 
-def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwidth, bin_width, start_freq, end_freq, timestamp, q_file):
+def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwidth, bin_width, start_freq, end_freq, timestamp):
     """
     Perform power spectral analysis on data of length fft_len, passing it off to
     be written to file afterward.
@@ -268,8 +268,6 @@ def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwi
     timestamp : float (seconds)
         The timestamp for this buffer
 
-    q_file : Queue
-        Queue used to communicate with file thread
     """
     DATA = fft_dbfs(data, window_func)
 
@@ -294,9 +292,25 @@ def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwi
 
     csv_str += ", ".join(["%.2f"%(x) for x in DATA[bin_start:bin_end]]) + "\n"
 
-    # Send csv_str to file_worker
-    q_file.put(csv_str)
-    sys.stdout.flush()
+    return csv_str
+
+
+def retune_and_settle(device, frequency, settle_time):
+    """Set RX frequency, verify readback when available, then settle."""
+    import time
+    started = time.monotonic()
+    device.rx.frequency = frequency
+    deadline = started + min(settle_time, 0.25)
+    while time.monotonic() < deadline:
+        try:
+            if abs(float(device.rx.frequency) - frequency) <= 1.0:
+                break
+        except (AttributeError, TypeError, ValueError):
+            break
+        time.sleep(0.001)
+    remaining = settle_time - (time.monotonic() - started)
+    if remaining > 0:
+        time.sleep(remaining)
 
 
 ################################################################################
@@ -314,6 +328,12 @@ def rx_callback(device, stream, meta_data, samples, num_samples, user_data):
     # Are we supposed to quit?
     if user_data['running'] == False:
         return None
+
+    # Do not let samples collected while the LO is settling form a frame.
+    import time
+    if time.monotonic() < user_data.get('discard_until', 0):
+        user_data['data_idx'] = 0
+        return stream.next()
 
     # Are we full already?  Then let's just keep on keeping on
     if data_idx == fft_len:
@@ -390,7 +410,7 @@ def freq_planning(start_freq, end_freq, bin_width, fmbw2, min_tune_freq=0):
 ################################################################################
 
 def main():
-    from time import time, sleep
+    from time import time, sleep, monotonic
     import threading
     from queue import Queue
     args = get_args()
@@ -436,7 +456,8 @@ def main():
 
     # fft_len is the minimum length FFT that guarantees us bins of less than or
     # equal width as requested through bin_width:
-    fft_len = int(ceil(bandwidth/bin_width))
+    from scipy.fft import next_fast_len
+    fft_len = next_fast_len(int(ceil(bandwidth/bin_width)))
 
     # Now that we know our actual fft length, find the true bin width:
     bin_width = bandwidth/fft_len
@@ -458,6 +479,12 @@ def main():
 
     # Start FFT worker pool
     num_workers = int(args['--num-workers'])
+    if num_workers < 1:
+        sys.stderr.write("ERROR: number of workers must be positive\n")
+        return 2
+    if int(args['--num-buffers']) < 1 or int(args['--num-transfers']) < 1 or int(args['--num-samples']) < 1:
+        sys.stderr.write("ERROR: buffer, transfer, and sample counts must be positive\n")
+        return 2
     try:
         scipy.signal.get_window(args['--window-type'], 8)
     except ValueError as exc:
@@ -489,8 +516,8 @@ def main():
         }
 
         # Initialize device.rx.frequency, then start the stream doing its thing
-        device.rx.frequency = freqs[0][0]
-        sleep(args['--settle-time'])
+        rx_data['discard_until'] = monotonic() + args['--settle-time']
+        retune_and_settle(device, freqs[0][0], args['--settle-time'])
         stream = device.rx.stream(rx_callback, num_buffers, bladeRF.FORMAT_SC16_Q11, num_samples, num_transfers, user_data=rx_data)
         stream_thread = threading.Thread(target=run_stream, args=(stream,), daemon=True)
         stream_thread.start()
@@ -499,6 +526,7 @@ def main():
 
         # Now zoom through frequencies like it's your day off
         freq_idx = 0
+        pending = []
         while exit_timer == 0 or curr_time - start_time <= exit_timer:
             while True:
                 frame_epoch = q_data.get()
@@ -508,15 +536,17 @@ def main():
             # Now that we have the data, apply it to the pool
             # The callback reuses its buffer; copy before handing it to a worker.
             analysis_data = rx_data['data'].copy()
-            analysis_args = (analysis_data, window_func, freqs[freq_idx][1], device.rx.frequency, fmbw2, bin_width, start_freq, end_freq, curr_time, q_file)
-            pool.apply_async(analyze_view, analysis_args)
+            analysis_args = (analysis_data, window_func, freqs[freq_idx][1], device.rx.frequency, fmbw2, bin_width, start_freq, end_freq, curr_time)
+            pending.append(pool.apply_async(analyze_view, analysis_args))
+            if len(pending) >= num_workers:
+                q_file.put(pending.pop(0).get())
 
             # If not, move on to the next frequency
             freq_idx = (freq_idx + 1)%len(freqs)
             rx_data['epoch'] += 1
             rx_data['data_idx'] = 0
-            device.rx.frequency = freqs[freq_idx][0]
-            sleep(args['--settle-time'])
+            rx_data['discard_until'] = monotonic() + args['--settle-time']
+            retune_and_settle(device, freqs[freq_idx][0], args['--settle-time'])
             if freq_idx == 0:
                 curr_time = time()
 
@@ -542,6 +572,8 @@ def main():
             stream.stop()
         if 'stream_thread' in locals():
             stream_thread.join(timeout=2)
+        for result in pending if 'pending' in locals() else []:
+            q_file.put(result.get())
         stop_worker_pool(manager, pool, file_process, q_file)
         print("Done stopping the worker pool!")
 

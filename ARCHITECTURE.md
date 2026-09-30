@@ -51,12 +51,15 @@ bandwidth, while `--bandwidth` remains the filter/FFT planning bandwidth.
 
 ## FFT and writer stage
 
-FFT work runs in a bounded process pool. A validated SciPy window is generated
-per frame, the requested sideband is sliced, and magnitudes are converted to
-dB. Workers enqueue complete CSV rows to one writer process. Keeping file I/O
-single-owner prevents interleaved rows and makes gzip output safe without shell
-redirection. Worker and manager shutdown is explicit so normal termination
-does not leak child processes.
+FFT work runs in a bounded process pool. The requested FFT length is rounded up
+with SciPy's `next_fast_len`, so the actual bin width is never worse than the
+request while favoring efficient composite FFT sizes. A validated window is
+generated per frame, the requested sideband is sliced, and magnitudes are
+converted to dBFS. Workers return complete rows; the main loop collects those
+results in submission order before sending them to one writer process. This
+preserves chronological CSV order without interleaved file I/O. Worker and
+manager shutdown is explicit so normal termination does not leak child
+processes.
 
 ## Measurement math
 
@@ -82,8 +85,10 @@ Every view has an epoch. The callback tags completed frames with that epoch;
 the main loop increments it before changing frequency, resets the partial
 frame, applies the retune, and waits `--settle-time`. Frames captured during
 the transition are discarded by epoch rather than analyzed as the new
-frequency. This is safer than sleeping alone because the callback continues
-while the LO settles.
+frequency. The callback also clears partial frames until the settle deadline,
+covering samples that arrive after the frequency write but before the device
+has stabilized. This is safer than sleeping alone because the callback
+continues while the LO settles.
 
 For a new device, capture the same narrow band repeatedly at several settle
 times, compare the first accepted frame with later frames, and choose the

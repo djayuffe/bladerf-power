@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.5 — 2026-09-30
+
+- Preserved CSV chronology by collecting asynchronous FFT results in order.
+- Added `next_fast_len` FFT sizing for better throughput at requested
+  resolution.
+- Added device-frequency readback checks and callback-side settle-frame
+  rejection.
+- Tightened worker, buffer, parameter, and heatmap edge-case handling.
+
 ## 0.2.4 — 2026-09-30
 
 - Added SC16_Q11 full-scale normalization and window coherent-gain correction.

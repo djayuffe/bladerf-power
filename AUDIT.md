@@ -20,6 +20,12 @@
 - Added SC16_Q11 normalization and FFT coherent-gain correction for stable
   amplitude dBFS math.
 - Added per-retune epochs so frames captured during LO settling are discarded.
+- Preserved CSV chronology by collecting asynchronous FFT results in submission
+  order before writing.
+- Rounded FFT sizes with `scipy.fft.next_fast_len` for better throughput while
+  maintaining requested-or-better bin resolution.
+- Added callback-side settle deadlines so post-retune partial frames cannot
+  slip through as valid measurements.
 
 ## Remaining hardware boundary
 

@@ -136,7 +136,12 @@ def duration_parse(s):
 def date_parse(s):
     if '-' not in s:
         return datetime.datetime.fromtimestamp(int(s))
-    return datetime.datetime.strptime(s, '%Y-%m-%d %H:%M:%S')
+    for fmt in ('%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S'):
+        try:
+            return datetime.datetime.strptime(s, fmt)
+        except ValueError:
+            pass
+    raise ValueError('invalid timestamp: %s' % s)
 
 def palette_parse(s):
     palettes = {'default': default_palette,
@@ -231,8 +236,8 @@ def summarize_pass(args):
     f_cache = set()
     times = set()
     labels = set()
-    min_z = 0
-    max_z = -100
+    min_z = float('inf')
+    max_z = float('-inf')
     start, stop = None, None
 
     for line in raw_data():
@@ -283,6 +288,8 @@ def summarize_pass(args):
     if not times or not freqs:
         raise ValueError('input contains no usable samples in the selected range')
     if not args.db_limit:
+        if min_z == float('inf') or max_z == float('-inf'):
+            raise ValueError('input contains no numeric dB values')
         args.db_limit = (min_z, max_z)
 
     if args.tail_time is not None:
