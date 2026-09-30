@@ -139,6 +139,11 @@ bladerf-diagnostics --auto-configure --device YOUR_SERIAL --json
 # Measure receive-only USB delivery at a controlled ADC rate
 bladerf-diagnostics --usb-test --usb-seconds 5 \
   --usb-rate 2400000 --usb-buffer-size 8192 --device YOUR_SERIAL --json
+
+# Sweep host/USB operating points in isolated receive-only probes
+bladerf-diagnostics --usb-test --usb-seconds 3 \
+  --usb-rates 1000000,2400000,4000000 \
+  --usb-buffer-sizes 4096,8192,16384 --device YOUR_SERIAL --json
 ```
 
 The benchmark reports median latency, frames/second, peak level, noise floor,
@@ -153,6 +158,9 @@ profile before starting a survey.
 The USB test measures successful SC16_Q11 payload delivery, not RF sensitivity:
 `payload_bytes_per_second` is four bytes per complex sample and
 `rate_utilization` compares delivered samples with the requested ADC rate.
+The matrix form probes every rate/buffer pair independently, making failures
+and sustainable utilization easy to compare instead of masking them in one
+aggregate number.
 Run it at several buffer sizes/rates when diagnosing host USB limits, dropped
 buffers, or a capture that cannot sustain its configured rate.
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.2 — 2026-09-30
+
+- Added isolated USB rate/buffer-size matrix benchmarking with per-case
+  throughput, readback, utilization, and failure reporting.
+- Added CLI controls `--usb-rates` and `--usb-buffer-sizes`.
+
 ## 0.7.1 — 2026-09-30
 
 - Added a receive-only low-level USB throughput benchmark with effective sample

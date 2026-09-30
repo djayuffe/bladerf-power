@@ -1,6 +1,7 @@
 import unittest
 
-from bladerf_diagnostics import clipping_sweep, recommend, run_self_test, usb_throughput_test
+from bladerf_diagnostics import (clipping_sweep, recommend, run_self_test,
+                                 usb_throughput_matrix, usb_throughput_test)
 
 
 class DiagnosticsTests(unittest.TestCase):
@@ -23,6 +24,11 @@ class DiagnosticsTests(unittest.TestCase):
     def test_usb_test_rejects_legacy_module(self):
         result = usb_throughput_test(duration=0.1, module=object())
         self.assertEqual(result["status"], "unsupported")
+
+    def test_usb_matrix_is_empty_safe_without_hardware(self):
+        results = usb_throughput_matrix('', 0, (1,), (1,))
+        self.assertEqual(results[0]["status"], "invalid")
+        self.assertEqual(results[0]["requested_buffer_size"], 1)
 
 
 if __name__ == "__main__":

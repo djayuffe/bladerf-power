@@ -236,6 +236,7 @@ def usb_throughput_test(identifier: str = "", duration: float = 2.0,
         return {"status": "ok", "backend": "modern-sync",
                 "requested_sample_rate": int(sample_rate),
                 "readback_sample_rate": int(getattr(channel, "sample_rate", sample_rate)),
+                "readback_bandwidth": int(getattr(channel, "bandwidth", min(sample_rate, 2_000_000))),
                 "buffer_samples": int(buffer_size), "buffers": calls,
                 "samples": samples, "elapsed_seconds": elapsed,
                 "samples_per_second": samples / elapsed,
@@ -255,6 +256,20 @@ def usb_throughput_test(identifier: str = "", duration: float = 2.0,
             pass
 
 
+def usb_throughput_matrix(identifier: str, duration: float,
+                          sample_rates: tuple[int, ...],
+                          buffer_sizes: tuple[int, ...]) -> list[dict]:
+    """Run isolated USB probes across rate/buffer combinations."""
+    results = []
+    for sample_rate in sample_rates:
+        for buffer_size in buffer_sizes:
+            result = usb_throughput_test(identifier, duration, sample_rate,
+                                         buffer_size)
+            result["requested_buffer_size"] = buffer_size
+            results.append(result)
+    return results
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="bladerf-power validation and benchmark advisor")
     parser.add_argument("--self-test", action="store_true",
@@ -268,6 +283,10 @@ def main(argv=None):
     parser.add_argument("--usb-seconds", type=float, default=2.0)
     parser.add_argument("--usb-rate", type=int, default=2_400_000)
     parser.add_argument("--usb-buffer-size", type=int, default=8192)
+    parser.add_argument("--usb-rates", default=None,
+                        help="comma-separated USB test rates (overrides --usb-rate)")
+    parser.add_argument("--usb-buffer-sizes", default=None,
+                        help="comma-separated USB test buffer sizes")
     parser.add_argument("--device", default="", help="optional bladeRF identifier for readback")
     parser.add_argument("--fft-sizes", default="256,1024,4096",
                         help="comma-separated benchmark FFT sizes")
@@ -289,8 +308,16 @@ def main(argv=None):
     if args.auto_configure:
         report["hardware"] = probe_hardware(args.device)
     if args.usb_test:
-        report["usb"] = usb_throughput_test(args.device, args.usb_seconds,
-                                              args.usb_rate, args.usb_buffer_size)
+        rates = tuple(int(item) for item in args.usb_rates.split(',')) if args.usb_rates else (args.usb_rate,)
+        buffers = tuple(int(item) for item in args.usb_buffer_sizes.split(',')) if args.usb_buffer_sizes else (args.usb_buffer_size,)
+        if any(value <= 0 for value in rates + buffers):
+            parser.error("USB rates and buffer sizes must be positive")
+        if len(rates) == 1 and len(buffers) == 1:
+            report["usb"] = usb_throughput_test(args.device, args.usb_seconds,
+                                                  rates[0], buffers[0])
+        else:
+            report["usb"] = usb_throughput_matrix(args.device, args.usb_seconds,
+                                                   rates, buffers)
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
