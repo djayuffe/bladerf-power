@@ -46,7 +46,7 @@ except ImportError:  # allow --help and --version without DSP dependencies
 def get_args():
     parser = argparse.ArgumentParser(description='Receive-only bladeRF spectrum survey')
     parser.add_argument('range', metavar='LOWER:UPPER:BIN_WIDTH')
-    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.2.0')
+    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.2.2')
     parser.add_argument('-f', '--file', default='output.csv')
     parser.add_argument('-z', '--compress', action='store_true')
     parser.add_argument('-e', '--exit-timer', default='0')
@@ -61,6 +61,10 @@ def get_args():
     parser.add_argument('-t', '--num-transfers', default='16')
     parser.add_argument('-l', '--num-samples', default='8192')
     parser.add_argument('-P', '--num-workers', default='2')
+    parser.add_argument('--sample-rate', default=None,
+                        help='ADC sample rate; defaults to capture bandwidth')
+    parser.add_argument('--settle-time', type=float, default=0.01,
+                        help='seconds to wait after each retune (default: 0.01)')
     parser.add_argument('--dry-run', action='store_true')
     parsed = parser.parse_args()
     return {
@@ -72,6 +76,8 @@ def get_args():
         '--rx-vga2': parsed.rx_vga2, '--device': parsed.device,
         '--num-buffers': parsed.num_buffers, '--num-transfers': parsed.num_transfers,
         '--num-samples': parsed.num_samples, '--num-workers': parsed.num_workers,
+        '--sample-rate': parsed.sample_rate or parsed.bandwidth,
+        '--settle-time': parsed.settle_time,
         '--dry-run': parsed.dry_run,
     }
 
@@ -100,7 +106,10 @@ def suffix(x):
         return 1
 
 def suffixed(x):
-    tricade = int(log10(abs(x)))/3
+    if x == 0:
+        return '0'
+    tricade = int(log10(abs(x)))//3
+    tricade = max(0, min(tricade, 6))
     mapping = {0: '', 1:'K', 2:'M', 3:'G', 4:'T', 5:'P', 6:'E'}
     return "%.1f%s"%(x/(1000**tricade), mapping[tricade])
 
@@ -179,34 +188,26 @@ def file_worker(q_file, outfile, compress):
     print("Gracefully exited file_worker")
 
 def start_worker_pool(num_workers, outfile, compress):
-    pool = Pool(processes=num_workers+1)
-    q_file = Manager().Queue()
+    manager = Manager()
+    pool = Pool(processes=max(1, num_workers))
+    q_file = manager.Queue()
     file_process = Process(target=file_worker, args=(q_file, outfile, compress))
     file_process.start()
-    return pool, file_process, q_file
+    return manager, pool, file_process, q_file
 
-def stop_worker_pool(pool, file_process, q_file):
+def stop_worker_pool(manager, pool, file_process, q_file):
     print("Closing worker pool...")
-    try:
-        pool.terminate()
-    except:
-        print("pool.close() failed")
-        pass
+    pool.close()
 
     print("Joining worker pool...")
-    try:
-        pool.join()
-    except:
-        print("pool.join() failed")
-        pass
+    pool.join()
 
     print("Joining file process...")
-    try:
-        q_file.put("I'm sorry dave, it's time to die")
-        file_process.join()
-    except:
-        print("file_process.join() failed")
-        pass
+    q_file.put("I'm sorry dave, it's time to die")
+    file_process.join(timeout=10)
+    if file_process.is_alive():
+        file_process.terminate()
+    manager.shutdown()
 
 def db(x):
     from numpy import log10, abs
@@ -388,6 +389,12 @@ def main():
     if args['--dry-run']:
         print("validated sweep: %.0fHz..%.0fHz, %.3fHz bins" % (start_freq, end_freq, bin_width))
         return 0
+    if not 0 < float(args['--filter-margin']) <= 1:
+        sys.stderr.write("ERROR: filter margin must be greater than 0 and at most 1\n")
+        return 2
+    if args['--settle-time'] < 0:
+        sys.stderr.write("ERROR: settle time cannot be negative\n")
+        return 2
     import scipy.signal
     import bladeRF
     try:
@@ -401,7 +408,7 @@ def main():
     device.rx.enabled = True
     bandwidth = intish(args['--bandwidth'])
     device.rx.bandwidth = bandwidth
-    device.rx.sample_rate = intish(args['--bandwidth'])
+    device.rx.sample_rate = intish(args['--sample-rate'])
 
     filter_margin = float(args['--filter-margin'])
     start_freq = max(start_freq, bladeRF.FREQUENCY_MIN)
@@ -435,10 +442,15 @@ def main():
 
     # Start FFT worker pool
     num_workers = int(args['--num-workers'])
-    window_func = getattr(scipy.signal, args['--window-type'])
+    try:
+        scipy.signal.get_window(args['--window-type'], 8)
+    except ValueError as exc:
+        sys.stderr.write("ERROR: unknown FFT window %r\n" % args['--window-type'])
+        return 2
+    window_func = lambda n: scipy.signal.get_window(args['--window-type'], n, fftbins=True)
     outfile = args['--file']
     compress = bool(args['--compress'])
-    pool, file_process, q_file = start_worker_pool(num_workers, outfile, compress)
+    manager, pool, file_process, q_file = start_worker_pool(num_workers, outfile, compress)
 
     # Timing stuffage
     start_time = time()
@@ -461,6 +473,7 @@ def main():
 
         # Initialize device.rx.frequency, then start the stream doing its thing
         device.rx.frequency = freqs[0][0]
+        sleep(args['--settle-time'])
         stream = device.rx.stream(rx_callback, num_buffers, bladeRF.FORMAT_SC16_Q11, num_samples, num_transfers, user_data=rx_data)
         threading.Thread(target=run_stream, args=(stream,)).start()
 
@@ -472,12 +485,15 @@ def main():
             samples_received = q_data.get()
 
             # Now that we have the data, apply it to the pool
-            args = (rx_data['data'], window_func, freqs[freq_idx][1], device.rx.frequency, fmbw2, bin_width, start_freq, end_freq, curr_time, q_file)
-            pool.apply_async(analyze_view, args)
+            # The callback reuses its buffer; copy before handing it to a worker.
+            analysis_data = rx_data['data'].copy()
+            analysis_args = (analysis_data, window_func, freqs[freq_idx][1], device.rx.frequency, fmbw2, bin_width, start_freq, end_freq, curr_time, q_file)
+            pool.apply_async(analyze_view, analysis_args)
 
             # If not, move on to the next frequency
             freq_idx = (freq_idx + 1)%len(freqs)
             device.rx.frequency = freqs[freq_idx][0]
+            sleep(args['--settle-time'])
             rx_data['data_idx'] = 0
             if freq_idx == 0:
                 curr_time = time()
@@ -500,7 +516,7 @@ def main():
     finally:
         print() # Clear out the status_line stuffage
         rx_data['running'] = False
-        stop_worker_pool(pool, file_process, q_file)
+        stop_worker_pool(manager, pool, file_process, q_file)
         print("Done stopping the worker pool!")
 
     print("done!")

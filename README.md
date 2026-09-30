@@ -30,6 +30,10 @@ current binding supported by your libbladeRF release.
   without SDR/DSP dependencies.
 - Removed shell interpolation from gzip output and added UTF-8 handling.
 - Added validation for sweep direction and bin width.
+- Added configurable ADC sample rate, post-retune settling, and validated FFT
+  window selection for more reliable tuning/lock behavior.
+- Asynchronous FFT workers now receive immutable per-frame copies, preventing
+  capture/analysis races during fast sweeps.
 - Fixed heatmap frequency slicing, equal-range color scaling, Pillow resampling,
   mutable defaults, and the missing-font/network side effect.
 - Excluded generated CSV/PNG captures and build products from version control.

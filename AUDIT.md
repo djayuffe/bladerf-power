@@ -12,6 +12,11 @@
 - Fixed Pillow's removed `Image.ANTIALIAS` and `FreeTypeFont.getsize` APIs.
 - Removed the automatic network download of `Vera.ttf`.
 - Fixed equal min/max color scaling and mutable default sets.
+- Copied capture buffers before asynchronous FFT work to prevent data races.
+- Added configurable ADC sample rate and post-retune settle delay.
+- Replaced fragile SciPy window attribute lookup with validated `get_window`.
+- Kept worker manager lifetime explicit and shut down workers cleanly.
+- Added empty-range and floating-point heatmap guards.
 
 ## Remaining hardware boundary
 

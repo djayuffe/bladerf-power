@@ -280,6 +280,8 @@ def summarize_pass(args):
         if args.head_time is not None and args.end_time is None:
             args.end_time = start + args.head_time
 
+    if not times or not freqs:
+        raise ValueError('input contains no usable samples in the selected range')
     if not args.db_limit:
         args.db_limit = (min_z, max_z)
 
@@ -389,7 +391,7 @@ def collate_row(x_size):
         if args.low_freq:
             start_freq = max(args.low_freq, start_freq)
         # sometimes fails?  skip or abort?
-        x_start = args.freqs.index(start_freq)
+        x_start = closest_index(start_freq, args.freqs)
         zs = floatify(line[6+start_col:6+stop_col+1])
         if t != old_t:
             yield old_t, row
@@ -567,7 +569,7 @@ def create_labels(args, img):
 
     for scale,y in [(1,10), (5,15), (10,19), (50,22), (100,24), (500, 25)]:
         hits = tape_lines(draw, args.freqs, label_base/scale, y, tape_height)
-        pixels_per_hit = width / hits
+        pixels_per_hit = width / hits if hits else width
         if pixels_per_hit > 50:
             tape_text(img, args.freqs, label_base/scale, y-tape_pt)
         if pixels_per_hit < 10:
