@@ -13,6 +13,6 @@ jobs:
       - name: Install analysis dependencies
         run: python -m pip install numpy scipy Pillow
       - name: Compile source
-        run: python -m py_compile bladerf_power.py heatmap.py
+        run: python -m py_compile bladerf_power.py bladerf_backend.py heatmap.py spectrum_math.py
       - name: Run hardware-free tests
         run: python -m unittest discover -s tests

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 — 2026-09-30
+
+- Added a compatibility adapter for the current Nuand `bladerf.BladeRF`
+  synchronous Python API while retaining the historical callback backend.
+- Corrected FFT/bin planning to use hardware read-back ADC sample rates and
+  analog bandwidth limits.
+- Hardened SC16_Q11 endpoint clipping, short-callback handling, stream-error
+  reporting, numeric validation, gzip flushing, and RX shutdown cleanup.
+- Added backend, boundary, and hardware-geometry regression coverage.
+
 ## 0.4.0 — 2026-09-30
 
 - Added `--average-frames` for linear-power averaging across accepted frames.

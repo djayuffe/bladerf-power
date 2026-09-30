@@ -44,8 +44,12 @@ python3 heatmap.py uhf.csv.gz uhf.png --low 433M --high 435M \
   --db -120 -20 --ytick 1m --palette extended
 ```
 
-The requested bin width is quantized to the actual FFT bin width. Smaller bins
-increase resolution and CPU/disk cost; a larger `--settle-time` improves lock
+The requested bin width is quantized to the actual FFT bin width. The program
+reads back the hardware-selected bandwidth and ADC sample rate after setting
+them; libbladeRF may quantize requests to supported discrete values. FFT
+spacing follows the ADC sample rate, while each tuning view is limited by the
+narrower of the analog bandwidth and sample rate. Smaller bins increase
+resolution and CPU/disk cost; a larger `--settle-time` improves lock
 confidence on devices that need longer retunes. `--num-workers` controls FFT
 parallelism, while CSV writing remains ordered through a single writer.
 
@@ -55,10 +59,11 @@ Validate a sweep without a bladeRF, driver, NumPy, or SciPy:
 python3 bladerf_power.py 100M:110M:1M --dry-run
 ```
 
-Hardware capture requires a compatible `bladeRF` Python binding and
-`libbladeRF` installation. The old vendored `pybladeRF` tree was intentionally
-removed from this repository because it is Python 2-era generated code; use a
-current binding supported by your libbladeRF release.
+Hardware capture requires a Nuand Python binding and `libbladeRF` installation.
+Both the historical `bladeRF.Device` callback API and the current
+`bladerf.BladeRF` synchronous API are supported. The old vendored `pybladeRF`
+tree was intentionally removed because it is Python 2-era generated code; use
+a binding supported by your libbladeRF release.
 
 ## Changes in the audited port
 
@@ -69,6 +74,8 @@ current binding supported by your libbladeRF release.
 - Added amplitude dBFS, power dBFS, and PSD dBFS/Hz metrics.
 - Added SC16 clipping counts, DC removal, IQ gain/phase correction, and
   calibration offsets.
+- Uses the bladeRF SC16_Q11 signed range correctly (`-2048..2047`) and reports
+  overloaded samples instead of silently treating them as valid ADC data.
 - Added configurable ADC sample rate, post-retune settling, and validated FFT
   window selection for more reliable tuning/lock behavior.
 - Added configurable linear-power frame averaging (`--average-frames`) to
@@ -107,6 +114,20 @@ never downloads assets.
 This project is receive-only. Do not transmit, monitor restricted services, or
 collect data without authorization. Follow local spectrum rules and calibrate
 the bladeRF before interpreting results.
+
+## Hardware and ADC references
+
+The capture path uses libbladeRF's interleaved little-endian SC16_Q11 stream.
+Nuand documents the format as sign-extended 16-bit I/Q values with a nominal
+12-bit range of `-2048..2047`; the implementation normalizes by 2048 and
+counts values outside that interval as clipping. Hardware-specific frequency,
+bandwidth, gain, and sample-rate ranges are selected by libbladeRF and may be
+quantized per device, so readback values—not legacy compile-time constants—are
+used for measurement math.
+
+See the [SC16_Q11 reference implementation](https://github.com/Nuand/bladeRF/blob/master/host/misc/matlab/load_sc16q11.m),
+[current Python binding](https://github.com/Nuand/bladeRF/tree/master/host/libraries/libbladeRF_bindings/python),
+and [Nuand's device-operation guide](https://github.com/Nuand/bladeRF/wiki/Getting-Started%3A-Verifying-Basic-Device-Operation).
 
 ## License
 

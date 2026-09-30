@@ -14,6 +14,10 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(module.floatish("2.4M"), 2_400_000)
         self.assertEqual(module.intish("10k"), 10_000)
 
+    def test_unknown_suffix_is_rejected(self):
+        with self.assertRaises(ValueError):
+            module.floatish("10x")
+
     def test_duration_composition(self):
         self.assertEqual(module.timeish("1h30m5s"), 5_405)
 
@@ -24,6 +28,10 @@ class ParserTests(unittest.TestCase):
         plan = module.freq_planning(100, 1_000, 10, 200)
         self.assertGreaterEqual(len(plan), 1)
         self.assertEqual(plan[0][0], 90)
+
+    def test_frequency_plan_allows_device_lower_edge(self):
+        plan = module.freq_planning(0, 1_000, 10, 200, 0)
+        self.assertGreaterEqual(len(plan), 1)
 
     def test_fft_normalization(self):
         try:

@@ -26,9 +26,10 @@ def sc16_to_complex(raw: np.ndarray, full_scale: float = 2048.0) -> tuple[np.nda
         raise ValueError("SC16 input must be a one-dimensional even-length array")
     if full_scale <= 0 or not math.isfinite(full_scale):
         raise ValueError("full_scale must be positive and finite")
-    # SC16_Q11 uses the low 12 bits for signed samples; values beyond the
-    # nominal +/-2048 range indicate an overloaded or mis-scaled stream.
-    clipped = int(np.count_nonzero(np.abs(values) > full_scale))
+    # SC16_Q11 is signed 12-bit data sign-extended in int16 containers. The
+    # valid interval is [-2048, 2047] for the default scale; +2048 is already
+    # an overload even though its absolute value equals the scale.
+    clipped = int(np.count_nonzero((values >= full_scale) | (values < -full_scale)))
     complex_samples = values[::2].astype(np.float64) + 1j * values[1::2].astype(np.float64)
     return complex_samples / full_scale, clipped
 

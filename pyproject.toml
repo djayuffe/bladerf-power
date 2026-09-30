@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bladerf-power"
-version = "0.4.0"
+version = "0.5.0"
 description = "Receive-only bladeRF spectrum survey and heatmap tools"
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.23", "scipy>=1.9", "Pillow>=9.0"]
@@ -14,4 +14,4 @@ bladerf-power = "bladerf_power:main"
 bladerf-heatmap = "heatmap:main"
 
 [tool.setuptools]
-py-modules = ["bladerf_power", "heatmap", "spectrum_math"]
+py-modules = ["bladerf_power", "bladerf_backend", "heatmap", "spectrum_math"]

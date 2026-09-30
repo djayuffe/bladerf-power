@@ -36,12 +36,22 @@
 - Added a reusable `spectrum_math.py` DSP layer with amplitude/power/PSD
   metrics, ENBW correction, DC/IQ correction, calibration offsets, and clipping
   diagnostics.
+- Corrected SC16_Q11 overload detection to include the invalid positive endpoint
+  (`+2048`) while retaining the valid negative endpoint (`-2048`).
+- Made FFT spacing follow the device read-back ADC sample rate and limited
+  tuning views by the narrower of ADC rate and analog filter bandwidth.
+- Added validation before `--dry-run`, strict numeric suffix handling, short
+  callback rejection, guaranteed gzip trailer flushing, and RX disable/close
+  cleanup.
 
 ## Remaining hardware boundary
 
-The original bladeRF callback API is tied to an old third-party Python binding.
-The hardware path is retained but requires a current compatible binding and
-libbladeRF installation. No hardware is accessed by CI or `--dry-run`.
+The hardware path supports both the historical callback-oriented `bladeRF`
+Python binding (`bladeRF.Device`/`device.rx`) and the current Nuand
+`bladerf.BladeRF`/`Channel` synchronous API through `bladerf_backend.py`. The
+adapter preserves the same epoch, settle, copy, DSP, and ordered-writer
+contract. No hardware is accessed by CI or `--dry-run`; validate the installed
+firmware/FPGA and USB throughput on the target device before long captures.
 
 The historical `pybladeRF` vendored package, generated eggs, CSV captures, PNG
 outputs, and build directories were excluded because they are stale/generated

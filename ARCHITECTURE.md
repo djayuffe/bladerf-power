@@ -64,9 +64,10 @@ processes.
 ## Measurement math
 
 SC16 samples are interpreted as complex signed 16-bit I/Q pairs and normalized
-by the SC16_Q11 full-scale value (2048). Each frame is windowed and its FFT is
-divided by the window coherent gain, `sum(window)`, before conversion to
-amplitude dBFS:
+by the SC16_Q11 full-scale value (2048). The valid signed ADC interval is
+`[-2048, 2047]`; out-of-range values are counted as clipping. Each frame is
+windowed and its FFT is divided by the window coherent gain, `sum(window)`,
+before conversion to amplitude dBFS:
 
 ```text
 samples = (I + jQ) / 2048
@@ -78,6 +79,11 @@ This makes a bin-centred full-scale complex tone approximately 0 dBFS and
 prevents FFT length/window choice from changing its nominal level. It is not
 calibrated dBm; antenna gain, front-end loss, device calibration, and window
 noise bandwidth still require an external reference.
+
+FFT spacing uses the device's read-back ADC sample rate. The analog filter
+bandwidth only limits the useful view, so the planner uses
+`min(sample_rate, bandwidth)` and never assumes a requested rate was accepted
+unchanged by libbladeRF.
 
 The DSP layer also supports power dBFS and PSD dBFS/Hz. PSD divides by sample
 rate and window equivalent noise bandwidth, which makes noise measurements

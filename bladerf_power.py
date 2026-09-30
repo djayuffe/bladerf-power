@@ -47,7 +47,7 @@ except ImportError:  # allow --help and --version without DSP dependencies
 def get_args():
     parser = argparse.ArgumentParser(description='Receive-only bladeRF spectrum survey')
     parser.add_argument('range', metavar='LOWER:UPPER:BIN_WIDTH')
-    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.4.0')
+    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.5.0')
     parser.add_argument('-f', '--file', default='output.csv')
     parser.add_argument('-z', '--compress', action='store_true')
     parser.add_argument('-e', '--exit-timer', default='0')
@@ -122,7 +122,7 @@ def suffix(x):
     elif x == 'e':
         return 1000000000000000000
     else:
-        return 1
+        raise ValueError("unknown numeric suffix: %s" % x)
 
 def suffixed(x):
     if x == 0:
@@ -201,9 +201,13 @@ def file_worker(q_file, outfile, compress):
                 pass
     except KeyboardInterrupt:
         pass
+    except RuntimeError as exc:
+        sys.stderr.write("ERROR: %s\n" % exc)
+        return 2
 
-    if not (outfile == "-" and compress):
-        f.close()
+    # Closing GzipFile flushes its trailer even when stdout is the underlying
+    # file object; GzipFile does not close stdout itself.
+    f.close()
     print("Gracefully exited file_worker")
 
 def start_worker_pool(num_workers, outfile, compress):
@@ -252,7 +256,7 @@ def fft_dbfs(data, window_func, full_scale=SC16_Q11_FULL_SCALE):
     magnitude = maximum(abs(spectrum), 1e-15)
     return 20 * log10(magnitude)
 
-def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwidth, bin_width, start_freq, end_freq, timestamp, metric='amplitude', full_scale=2048.0, dc_notch=True, iq_gain=1.0, iq_phase_deg=0.0, calibration_db=0.0):
+def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwidth, bin_width, start_freq, end_freq, timestamp, metric='amplitude', full_scale=2048.0, dc_notch=True, iq_gain=1.0, iq_phase_deg=0.0, calibration_db=0.0, sample_rate_hz=None):
     """
     Perform power spectral analysis on data of length fft_len, passing it off to
     be written to file afterward.
@@ -291,7 +295,9 @@ def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwi
     import numpy as np
     array = np.asarray(data)
     sample_count = array.shape[-1] // 2
-    sample_rate = bin_width * sample_count
+    sample_rate = float(sample_rate_hz) if sample_rate_hz is not None else bin_width * sample_count
+    if sample_rate <= 0:
+        raise ValueError("sample rate must be positive")
     window = window_func(sample_count)
     analyzer = analyze_sc16_frames if array.ndim == 2 else analyze_sc16
     result = analyzer(array, sample_rate, center_freq, window, metric,
@@ -356,6 +362,14 @@ def rx_callback(device, stream, meta_data, samples, num_samples, user_data):
     if user_data['running'] == False:
         return None
 
+    # A short callback can occur on stream shutdown or after a transport
+    # error. Never let a malformed buffer corrupt the next FFT frame.
+    expected_values = int(num_samples) * 2
+    if in_data.size < expected_values:
+        user_data['short_callbacks'] = user_data.get('short_callbacks', 0) + 1
+        user_data['data_idx'] = 0
+        return stream.next()
+
     # Do not let samples collected while the LO is settling form a frame.
     import time
     if time.monotonic() < user_data.get('discard_until', 0):
@@ -411,7 +425,7 @@ def freq_planning(start_freq, end_freq, bin_width, fmbw2, min_tune_freq=0):
         sideband to observe, upper or lower (true signifies lower sideband).
     """
     from math import ceil
-    if not (end_freq > start_freq > min_tune_freq and bin_width > 0 and fmbw2 > 0):
+    if not (end_freq > start_freq >= min_tune_freq and bin_width > 0 and fmbw2 > 0):
         raise ValueError("invalid frequency plan parameters")
     # First frequency is always the same; either just below start_freq or at
     # start_freq + bandwidth/2 - binwidth, in the case that start_freq is really
@@ -453,14 +467,18 @@ def main():
     except (ValueError, IndexError):
         sys.stderr.write("ERROR: expected lower:upper:positive_bin_width\n")
         return 2
-    if args['--average-frames'] < 1:
-        sys.stderr.write("ERROR: average frames must be positive\n")
+    try:
+        filter_margin = float(args['--filter-margin'])
+        requested_bandwidth = intish(args['--bandwidth'])
+        requested_sample_rate = intish(args['--sample-rate'])
+    except (TypeError, ValueError, IndexError):
+        sys.stderr.write("ERROR: bandwidth, sample rate, and filter margin must be numeric\n")
         return 2
-    if args['--dry-run']:
-        print("validated sweep: %.0fHz..%.0fHz, %.3fHz bins, metric=%s, settle=%gs/%d frames, average=%d" % (start_freq, end_freq, bin_width, args['--metric'], args['--settle-time'], args['--settle-frames'], args['--average-frames']))
-        return 0
-    if not 0 < float(args['--filter-margin']) <= 1:
+    if not 0 < filter_margin <= 1:
         sys.stderr.write("ERROR: filter margin must be greater than 0 and at most 1\n")
+        return 2
+    if requested_bandwidth <= 0 or requested_sample_rate <= 0:
+        sys.stderr.write("ERROR: bandwidth and sample rate must be positive\n")
         return 2
     if args['--settle-time'] < 0:
         sys.stderr.write("ERROR: settle time cannot be negative\n")
@@ -471,47 +489,92 @@ def main():
     if args['--full-scale'] <= 0 or args['--iq-gain'] <= 0:
         sys.stderr.write("ERROR: full-scale and IQ gain must be positive\n")
         return 2
+    if args['--average-frames'] < 1:
+        sys.stderr.write("ERROR: average frames must be positive\n")
+        return 2
+    if args['--dry-run']:
+        print("validated sweep: %.0fHz..%.0fHz, %.3fHz bins, metric=%s, settle=%gs/%d frames, average=%d" % (start_freq, end_freq, bin_width, args['--metric'], args['--settle-time'], args['--settle-frames'], args['--average-frames']))
+        return 0
     import scipy.signal
-    import bladeRF
     try:
-        device = bladeRF.Device(args['--device'])
+        import bladeRF
+    except ImportError as exc:
+        try:
+            import bladerf as bladeRF
+        except ImportError:
+            sys.stderr.write("ERROR: install a bladeRF Python binding and libbladeRF: %s\n" % exc)
+            return 2
+    try:
+        if hasattr(bladeRF, 'Device'):
+            device = bladeRF.Device(args['--device'])
+        else:
+            from bladerf_backend import ModernDeviceAdapter
+            device = ModernDeviceAdapter(bladeRF, args['--device'])
     except:
         if args['--device'] == '':
             print("ERROR: No bladeRF devices available!")
         else:
             print("ERROR: Could not open bladeRF device %s" % args['--device'])
-        return
-    device.rx.enabled = True
-    bandwidth = intish(args['--bandwidth'])
-    device.rx.bandwidth = bandwidth
-    device.rx.sample_rate = intish(args['--sample-rate'])
+        return 2
+    try:
+        device.rx.bandwidth = requested_bandwidth
+        device.rx.sample_rate = requested_sample_rate
+        # libbladeRF may quantize either value to the nearest supported
+        # hardware setting. Always use readback values for FFT/bin math.
+        bandwidth = int(getattr(device.rx, 'bandwidth', requested_bandwidth))
+        sample_rate = int(getattr(device.rx, 'sample_rate', requested_sample_rate))
+        if bandwidth <= 0 or sample_rate <= 0:
+            raise ValueError("device returned an invalid bandwidth or sample rate")
+        device.rx.enabled = True
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        sys.stderr.write("ERROR: unable to configure RX bandwidth/sample rate: %s\n" % exc)
+        return 2
 
-    filter_margin = float(args['--filter-margin'])
-    start_freq = max(start_freq, bladeRF.FREQUENCY_MIN)
-    end_freq = min(end_freq, bladeRF.FREQUENCY_MAX)
+    # Legacy bindings expose constants; newer libbladeRF APIs expose dynamic
+    # per-device ranges. Use constants only as a compatibility fallback and
+    # let the device setter reject values outside its true range.
+    frequency_min = float(getattr(bladeRF, 'FREQUENCY_MIN', 0))
+    frequency_max = float(getattr(bladeRF, 'FREQUENCY_MAX', float('inf')))
+    start_freq = max(start_freq, frequency_min)
+    end_freq = min(end_freq, frequency_max)
 
     if end_freq <= start_freq:
         sys.stderr.write("ERROR: end frequency must be greater than start frequency!\n")
-        return
+        return 2
+
+    # The ADC sample rate, not the analog filter bandwidth, determines FFT
+    # frequency spacing. The useful view is limited by whichever is narrower.
+    analysis_span = min(float(bandwidth), float(sample_rate))
 
     # fft_len is the minimum length FFT that guarantees us bins of less than or
     # equal width as requested through bin_width:
     from scipy.fft import next_fast_len
-    fft_len = next_fast_len(int(ceil(bandwidth/bin_width)))
+    fft_len = next_fast_len(int(ceil(sample_rate/bin_width)))
 
     # Now that we know our actual fft length, find the true bin width:
-    bin_width = bandwidth/fft_len
+    bin_width = sample_rate/fft_len
 
     # fmbw2 is the amount of spectrum we get with each view, we quantize to our
     # effective bin_width given our bandwidth and number of bins
-    fmbw2 = round(filter_margin*(bandwidth/2)*fft_len)/fft_len
+    fmbw2 = max(bin_width, round(filter_margin*(analysis_span/2)/bin_width)*bin_width)
 
-    freqs = freq_planning(start_freq, end_freq, bin_width, fmbw2, bladeRF.FREQUENCY_MIN)
+    freqs = freq_planning(start_freq, end_freq, bin_width, fmbw2, frequency_min)
     num_views = len(freqs)
 
-    device.lna_gain = int_or_attr(args['--lna-gain'])
-    device.rx.vga1 = int_or_attr(args['--rx-vga1'])
-    device.rx.vga2 = int_or_attr(args['--rx-vga2'])
+    try:
+        device.lna_gain = int_or_attr(args['--lna-gain'])
+        device.rx.vga1 = int_or_attr(args['--rx-vga1'])
+        device.rx.vga2 = int_or_attr(args['--rx-vga2'])
+    except (AttributeError, TypeError, ValueError):
+        # Newer bindings expose one calibrated total-gain control rather than
+        # the bladeRF1 LNA/VGA stage fields. Preserve explicit numeric gain;
+        # symbolic legacy defaults fall back to the device's safe zero dB.
+        try:
+            gain = intish(args['--rx-vga2'])
+        except (TypeError, ValueError, IndexError):
+            gain = 0
+        if hasattr(device.rx, 'set_manual_gain'):
+            device.rx.set_manual_gain(gain)
 
     num_buffers = int(args['--num-buffers'])
     num_samples = int(args['--num-samples'])
@@ -554,16 +617,20 @@ def main():
             'running': True,
             'epoch': 0,
             'discard_frames': args['--settle-frames'],
+            'short_callbacks': 0,
         }
 
         # Initialize device.rx.frequency, then start the stream doing its thing
         rx_data['discard_until'] = monotonic() + args['--settle-time']
         retune_and_settle(device, freqs[0][0], args['--settle-time'])
-        stream = device.rx.stream(rx_callback, num_buffers, bladeRF.FORMAT_SC16_Q11, num_samples, num_transfers, user_data=rx_data)
+        stream_format = getattr(bladeRF, 'FORMAT_SC16_Q11',
+                                getattr(getattr(bladeRF, 'Format', None), 'SC16_Q11', None))
+        stream = device.rx.stream(rx_callback, num_buffers, stream_format,
+                                   num_samples, num_transfers, user_data=rx_data)
         stream_thread = threading.Thread(target=run_stream, args=(stream,), daemon=True)
         stream_thread.start()
 
-        sys.stderr.write("Scanning from %sHz to %sHz, using %d views of %sHz with %d bins %sHz wide\n"%(suffixed(start_freq), suffixed(end_freq), num_views, suffixed(fmbw2), fft_len/2, suffixed(bin_width)))
+        sys.stderr.write("Scanning from %sHz to %sHz, using %d views of %sHz (BW %sHz, Fs %sHz) with %d bins %sHz wide\n"%(suffixed(start_freq), suffixed(end_freq), num_views, suffixed(fmbw2), suffixed(bandwidth), suffixed(sample_rate), fft_len/2, suffixed(bin_width)))
 
         # Now zoom through frequencies like it's your day off
         freq_idx = 0
@@ -572,7 +639,14 @@ def main():
             frame_batch = []
             while len(frame_batch) < args['--average-frames']:
                 while True:
-                    frame_epoch = q_data.get()
+                    try:
+                        frame_epoch = q_data.get(timeout=1.0)
+                    except queue.Empty:
+                        if rx_data.get('stream_error') is not None:
+                            raise RuntimeError("RX stream failed: %s" % rx_data['stream_error'])
+                        if not rx_data.get('running', True):
+                            raise RuntimeError("RX stream stopped before a complete frame")
+                        continue
                     if frame_epoch == rx_data['epoch']:
                         break
                 # The callback owns and reuses this buffer after the event.
@@ -582,7 +656,7 @@ def main():
             # Now that we have the data, apply it to the pool
             # The callback reuses its buffer; copy before handing it to a worker.
             analysis_data = frame_batch[0] if len(frame_batch) == 1 else array(frame_batch)
-            analysis_args = (analysis_data, window_func, freqs[freq_idx][1], device.rx.frequency, fmbw2, bin_width, start_freq, end_freq, curr_time, args['--metric'], args['--full-scale'], not args['--no-dc-notch'], args['--iq-gain'], args['--iq-phase'], args['--calibration-db'])
+            analysis_args = (analysis_data, window_func, freqs[freq_idx][1], device.rx.frequency, fmbw2, bin_width, start_freq, end_freq, curr_time, args['--metric'], args['--full-scale'], not args['--no-dc-notch'], args['--iq-gain'], args['--iq-phase'], args['--calibration-db'], sample_rate)
             pending.append(pool.apply_async(analyze_view, analysis_args))
             if len(pending) >= num_workers:
                 q_file.put(pending.pop(0).get())
@@ -619,9 +693,21 @@ def main():
             stream.stop()
         if 'stream_thread' in locals():
             stream_thread.join(timeout=2)
+        if 'device' in locals():
+            try:
+                device.rx.enabled = False
+            except (AttributeError, RuntimeError):
+                pass
         for result in pending if 'pending' in locals() else []:
             q_file.put(result.get())
         stop_worker_pool(manager, pool, file_process, q_file)
+        if rx_data.get('short_callbacks', 0):
+            sys.stderr.write("WARNING: discarded %d short RX callbacks\n" % rx_data['short_callbacks'])
+        if 'device' in locals() and hasattr(device, 'close'):
+            try:
+                device.close()
+            except Exception:
+                pass
         print("Done stopping the worker pool!")
 
     print("done!")

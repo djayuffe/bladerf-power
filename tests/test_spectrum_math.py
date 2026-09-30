@@ -16,7 +16,7 @@ class SpectrumMathTests(unittest.TestCase):
         cls.window_metrics = staticmethod(window_metrics)
 
     def test_q11_conversion_and_clipping(self):
-        raw = self.np.array([2047, -2048, 32767, 0], dtype=self.np.int16)
+        raw = self.np.array([2047, -2048, 2048, 0], dtype=self.np.int16)
         samples, clipped = self.sc16_to_complex(raw)
         self.assertEqual(clipped, 1)
         self.assertEqual(samples[0], 2047 / 2048 - 1j)
