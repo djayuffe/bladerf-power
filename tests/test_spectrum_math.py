@@ -48,3 +48,15 @@ class SpectrumMathTests(unittest.TestCase):
         result = self.analyze_sc16_frames(frames, n, 0, window, dc_notch=False)
         self.assertEqual(result.clipped_samples, 1)
         self.assertAlmostEqual(float(clean.peak_db), -6.0206, places=3)
+
+    def test_robust_estimators_reject_impulsive_frame(self):
+        n = 128
+        window = self.np.ones(n)
+        frames = self.np.zeros((5, n * 2), dtype=self.np.int16)
+        frames[:, ::2] = 256
+        frames[2, ::2] = 1800
+        median = self.analyze_sc16_frames(frames, n, 0, window,
+                                          estimator='median', dc_notch=False)
+        mean = self.analyze_sc16_frames(frames, n, 0, window,
+                                        estimator='mean', dc_notch=False)
+        self.assertLess(float(median.peak_db), float(mean.peak_db))

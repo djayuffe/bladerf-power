@@ -53,13 +53,20 @@ python3 bladerf_power.py 430M:440M:2k --settle-time 0.02 --settle-frames 2 \
 python3 bladerf_power.py 430M:440M:2k --average-frames 4 \
   --metric power --file averaged.csv.gz --compress
 
+# Reject impulsive interference while averaging five frames
+python3 bladerf_power.py 430M:440M:2k --average-frames 5 \
+  --estimator median --file robust.csv.gz --compress
+
+# Keep the raw SC16_Q11 stream and a standards-oriented SigMF sidecar
+python3 bladerf_power.py 433M:435M:2k --sigmf-prefix captures/433mhz
+
 # Export calibrated PSD instead of amplitude dBFS
 python3 bladerf_power.py 100M:110M:5k --metric psd --calibration-db 2.3 \
   --iq-gain 0.998 --iq-phase -0.4 --file calibrated.csv
 
 # Crop and annotate a large capture during rendering
 python3 heatmap.py uhf.csv.gz uhf.png --low 433M --high 435M \
-  --db -120 -20 --ytick 1m --palette extended
+  --db -120 -20 --ytick 1m --palette thermal
 ```
 
 The requested bin width is quantized to the actual FFT bin width. The program
@@ -151,11 +158,13 @@ The positional range is `LOWER:UPPER:BIN_WIDTH`; suffixes `k`, `M`, `G`, `T`,
 | `--filter-margin` | Fraction of the usable half-band retained per tuning view. |
 | `--settle-time` / `--settle-frames` | Retune lock barrier and transient rejection. |
 | `--average-frames` | Number of accepted frames averaged in linear power. |
+| `--estimator` | `mean`, `median`, `trimmed`, or `winsorized` robust power estimator. |
 | `--metric amplitude\|power\|psd` | Output dBFS amplitude, dBFS power, or dBFS/Hz PSD. |
 | `--window-type` | Any window accepted by `scipy.signal.get_window`. |
 | `--iq-gain` / `--iq-phase` | Optional complex IQ correction before the FFT. |
 | `--calibration-db` | External absolute calibration offset. |
 | `--num-workers` | Parallel FFT workers; CSV writing remains ordered. |
+| `--raw-file` / `--sigmf-prefix` | Optional raw `ci16_le` or SigMF capture beside CSV. |
 
 Run `python3 bladerf_power.py --help` for the complete option list.
 
@@ -205,6 +214,9 @@ sample rate.
 
 - `bladerf_power.py` — capture planner, retune loop, SC16 FFT analysis, and
   streaming CSV writer.
+- `capture_io.py` — optional raw SC16_Q11 and SigMF sidecar writer.
+- `bladerf_diagnostics.py` — self-test, clipping sweep, benchmark matrix, and
+  configuration advisor.
 - `heatmap.py` — two-pass CSV reader and PIL renderer.
 - `tests/` — hardware-free parser and CLI regression tests.
 - `Vera.ttf` — bundled renderer font; no network access is needed at runtime.
@@ -238,6 +250,13 @@ the bladeRF before interpreting results.
   FFT workers.
 - **Noisy but stable trace:** use `--average-frames`, a suitable window, and
   PSD mode for comparisons across FFT sizes.
+
+Robust estimators need at least three averaged frames. `median` is the most
+impulse-resistant; `trimmed` removes the outer 20 percent; `winsorized` clamps
+the same tails before averaging. These operate on linear power and never run
+inside the hardware callback. The `thermal` palette is a dark-blue/cyan/
+yellow/white RGB gradient intended to make weak-to-strong signal structure
+easy to inspect.
 
 ## Hardware and ADC references
 

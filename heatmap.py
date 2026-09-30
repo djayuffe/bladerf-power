@@ -45,7 +45,7 @@ def build_parser():
     slicegroup.add_argument('--tail', dest='tail_time', default=None,
         help='Duration to use, stopping at the end.')
     parser.add_argument('--palette', dest='palette', default='default',
-        help='Set Color Palette: default, extended, charolastra, twente')
+        help='Set Color Palette: default, extended, charolastra, twente, thermal')
     return parser
 
 def frange(start, stop, step):
@@ -143,6 +143,7 @@ def palette_parse(s):
                 'extended': extended_palette,
                 'charolastra': charolastra_palette,
                 'twente': twente_palette,
+                'thermal': thermal_palette,
                }
     if s not in palettes:
         print('WARNING: %s not a valid palette' % s)
@@ -351,6 +352,22 @@ def twente_palette():
     for i in range(100):
         p.append((255, 255, 255))
     return p
+
+def thermal_palette():
+    """Return a perceptual dark-blue → cyan → yellow → white palette."""
+    stops = ((0.00, (4, 7, 30)), (0.25, (20, 55, 140)),
+             (0.50, (0, 170, 190)), (0.75, (245, 190, 45)),
+             (1.00, (255, 255, 255)))
+    palette = []
+    for index in range(256):
+        position = index / 255.0
+        for (left, left_rgb), (right, right_rgb) in zip(stops, stops[1:]):
+            if position <= right:
+                fraction = (position - left) / (right - left)
+                palette.append(tuple(int(round(a + fraction * (b - a)))
+                                     for a, b in zip(left_rgb, right_rgb)))
+                break
+    return palette
 
 def rgb_fn(palette, min_z, max_z):
     "palette is a list of tuples, returns a function of z"

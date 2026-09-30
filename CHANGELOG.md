@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0 — 2026-09-30
+
+- Added robust linear-power estimators: median, trimmed mean, and winsorized
+  mean, with CLI validation and regression coverage.
+- Added optional raw SC16_Q11 and SigMF `.sigmf-data`/`.sigmf-meta` writers
+  without changing frequency planning or callback timing.
+- Added and registered the `thermal` RGB heatmap palette.
+
 ## 0.6.0 — 2026-09-30
 
 - Added `bladerf-diagnostics` with deterministic DSP self-tests, SC16_Q11

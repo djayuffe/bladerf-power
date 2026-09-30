@@ -28,3 +28,9 @@ class HeatmapTests(unittest.TestCase):
     def test_constant_palette_value_is_valid(self):
         rgb = self.module.rgb_fn([(1, 2, 3)], -10, -10)
         self.assertEqual(rgb(-10), (1, 2, 3))
+
+    def test_thermal_palette_is_registered_and_rgb(self):
+        palette = self.module.palette_parse('thermal')()
+        self.assertEqual(len(palette), 256)
+        self.assertTrue(all(len(rgb) == 3 and all(0 <= c <= 255 for c in rgb)
+                            for rgb in palette))

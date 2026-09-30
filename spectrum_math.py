@@ -102,11 +102,13 @@ def analyze_sc16_frames(frames: np.ndarray, sample_rate: float, center_frequency
                         window: np.ndarray, metric: str = "power",
                         full_scale: float = 2048.0, dc_notch: bool = True,
                         iq_gain: float = 1.0, iq_phase_deg: float = 0.0,
-                        calibration_db: float = 0.0) -> SpectrumResult:
-    """Average multiple frames in linear power before converting to dB.
+                        calibration_db: float = 0.0,
+                        estimator: str = "mean") -> SpectrumResult:
+    """Combine multiple frames in linear power before converting to dB.
 
-    Linear-power averaging reduces uncorrelated noise approximately with the
-    number of frames while preserving narrowband signals. A single frame is
+    ``mean`` is the efficient default. ``median`` rejects impulsive interferers,
+    ``trimmed`` removes the highest/lowest 20 percent per bin, and
+    ``winsorized`` clamps those tails before averaging. A single frame is
     delegated to :func:`analyze_sc16` so the fast path has no extra overhead.
     """
     values = np.asarray(frames)
@@ -122,8 +124,27 @@ def analyze_sc16_frames(frames: np.ndarray, sample_rate: float, center_frequency
     # The per-frame amplitude spectrum is converted back to linear power
     # before averaging.  This avoids the bias and information loss caused by
     # averaging logarithmic values, while retaining the single-frame fast path.
-    power = np.mean([np.square(10.0 ** (result.values_db / 20.0))
-                     for result in results], axis=0)
+    power_stack = np.asarray([np.square(10.0 ** (result.values_db / 20.0))
+                              for result in results])
+    if estimator == "mean":
+        power = np.mean(power_stack, axis=0)
+    elif estimator == "median":
+        power = np.median(power_stack, axis=0)
+    elif estimator in ("trimmed", "winsorized"):
+        if power_stack.shape[0] < 3:
+            raise ValueError("%s estimator requires at least 3 frames" % estimator)
+        lower = np.quantile(power_stack, 0.2, axis=0)
+        upper = np.quantile(power_stack, 0.8, axis=0)
+        if estimator == "winsorized":
+            power = np.mean(np.clip(power_stack, lower, upper), axis=0)
+        else:
+            ordered = np.sort(power_stack, axis=0)
+            trim = max(1, int(power_stack.shape[0] * 0.2))
+            if trim * 2 >= power_stack.shape[0]:
+                raise ValueError("trimmed estimator needs more frames")
+            power = np.mean(ordered[trim:-trim], axis=0)
+    else:
+        raise ValueError("estimator must be mean, median, trimmed, or winsorized")
     if metric == "amplitude":
         db = 10.0 * np.log10(np.maximum(power, 1e-30))
     elif metric in ("power", "psd"):

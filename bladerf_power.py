@@ -47,8 +47,12 @@ except ImportError:  # allow --help and --version without DSP dependencies
 def get_args():
     parser = argparse.ArgumentParser(description='Receive-only bladeRF spectrum survey')
     parser.add_argument('range', metavar='LOWER:UPPER:BIN_WIDTH')
-    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.5.1')
+    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.7.0')
     parser.add_argument('-f', '--file', default='output.csv')
+    parser.add_argument('--raw-file', default=None,
+                        help='optional raw little-endian SC16_Q11 output')
+    parser.add_argument('--sigmf-prefix', default=None,
+                        help='optional SigMF prefix (writes .sigmf-data/.sigmf-meta)')
     parser.add_argument('-z', '--compress', action='store_true')
     parser.add_argument('-e', '--exit-timer', default='0')
     parser.add_argument('-b', '--bandwidth', default='28M')
@@ -70,6 +74,9 @@ def get_args():
                         help='complete frames to discard after settling (default: 1)')
     parser.add_argument('--average-frames', type=int, default=1,
                         help='valid frames to average per view (default: 1)')
+    parser.add_argument('--estimator', choices=('mean', 'median', 'trimmed', 'winsorized'),
+                        default='mean',
+                        help='linear-power frame estimator (default: mean)')
     parser.add_argument('--metric', choices=('amplitude', 'power', 'psd'), default='amplitude')
     parser.add_argument('--full-scale', type=float, default=2048.0,
                         help='SC16_Q11 full-scale reference (default: 2048)')
@@ -84,6 +91,7 @@ def get_args():
     return {
         '<lower:upper:bin_width>': parsed.range,
         '--file': parsed.file, '--compress': parsed.compress,
+        '--raw-file': parsed.raw_file, '--sigmf-prefix': parsed.sigmf_prefix,
         '--exit-timer': parsed.exit_timer, '--bandwidth': parsed.bandwidth,
         '--filter-margin': parsed.filter_margin, '--window-type': parsed.window_type,
         '--lna-gain': parsed.lna_gain, '--rx-vga1': parsed.rx_vga1,
@@ -94,6 +102,7 @@ def get_args():
         '--settle-time': parsed.settle_time,
         '--settle-frames': parsed.settle_frames,
         '--average-frames': parsed.average_frames,
+        '--estimator': parsed.estimator,
         '--metric': parsed.metric, '--full-scale': parsed.full_scale,
         '--no-dc-notch': parsed.no_dc_notch, '--iq-gain': parsed.iq_gain,
         '--iq-phase': parsed.iq_phase, '--calibration-db': parsed.calibration_db,
@@ -256,7 +265,7 @@ def fft_dbfs(data, window_func, full_scale=SC16_Q11_FULL_SCALE):
     magnitude = maximum(abs(spectrum), 1e-15)
     return 20 * log10(magnitude)
 
-def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwidth, bin_width, start_freq, end_freq, timestamp, metric='amplitude', full_scale=2048.0, dc_notch=True, iq_gain=1.0, iq_phase_deg=0.0, calibration_db=0.0, sample_rate_hz=None):
+def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwidth, bin_width, start_freq, end_freq, timestamp, metric='amplitude', full_scale=2048.0, dc_notch=True, iq_gain=1.0, iq_phase_deg=0.0, calibration_db=0.0, sample_rate_hz=None, estimator='mean'):
     """
     Perform power spectral analysis on data of length fft_len, passing it off to
     be written to file afterward.
@@ -299,10 +308,14 @@ def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwi
     if sample_rate <= 0:
         raise ValueError("sample rate must be positive")
     window = window_func(sample_count)
-    analyzer = analyze_sc16_frames if array.ndim == 2 else analyze_sc16
-    result = analyzer(array, sample_rate, center_freq, window, metric,
-                      full_scale, dc_notch, iq_gain, iq_phase_deg,
-                      calibration_db)
+    if array.ndim == 2:
+        result = analyze_sc16_frames(array, sample_rate, center_freq, window,
+                                     metric, full_scale, dc_notch, iq_gain,
+                                     iq_phase_deg, calibration_db, estimator)
+    else:
+        result = analyze_sc16(array, sample_rate, center_freq, window, metric,
+                              full_scale, dc_notch, iq_gain, iq_phase_deg,
+                              calibration_db)
 
     # Find start/end frequencies that we get from this FFT, and which bins we
     # want to slice out of the DATA array
@@ -489,11 +502,17 @@ def main():
     if args['--full-scale'] <= 0 or args['--iq-gain'] <= 0:
         sys.stderr.write("ERROR: full-scale and IQ gain must be positive\n")
         return 2
+    if args['--raw-file'] and args['--sigmf-prefix']:
+        sys.stderr.write("ERROR: choose either --raw-file or --sigmf-prefix\n")
+        return 2
     if args['--average-frames'] < 1:
         sys.stderr.write("ERROR: average frames must be positive\n")
         return 2
+    if args['--estimator'] in ('trimmed', 'winsorized') and args['--average-frames'] < 3:
+        sys.stderr.write("ERROR: %s estimator requires at least 3 average frames\n" % args['--estimator'])
+        return 2
     if args['--dry-run']:
-        print("validated sweep: %.0fHz..%.0fHz, %.3fHz bins, metric=%s, settle=%gs/%d frames, average=%d" % (start_freq, end_freq, bin_width, args['--metric'], args['--settle-time'], args['--settle-frames'], args['--average-frames']))
+        print("validated sweep: %.0fHz..%.0fHz, %.3fHz bins, metric=%s, estimator=%s, settle=%gs/%d frames, average=%d" % (start_freq, end_freq, bin_width, args['--metric'], args['--estimator'], args['--settle-time'], args['--settle-frames'], args['--average-frames']))
         return 0
     import scipy.signal
     try:
@@ -597,6 +616,11 @@ def main():
     outfile = args['--file']
     compress = bool(args['--compress'])
     manager, pool, file_process, q_file = start_worker_pool(num_workers, outfile, compress)
+    raw_writer = None
+    if args['--raw-file'] or args['--sigmf-prefix']:
+        from capture_io import CaptureWriter
+        raw_writer = CaptureWriter(args['--raw-file'] or args['--sigmf-prefix'],
+                                   sample_rate, freqs[0][0], args['--sigmf-prefix'])
 
     # Timing stuffage
     start_time = time()
@@ -656,7 +680,9 @@ def main():
             # Now that we have the data, apply it to the pool
             # The callback reuses its buffer; copy before handing it to a worker.
             analysis_data = frame_batch[0] if len(frame_batch) == 1 else array(frame_batch)
-            analysis_args = (analysis_data, window_func, freqs[freq_idx][1], device.rx.frequency, fmbw2, bin_width, start_freq, end_freq, curr_time, args['--metric'], args['--full-scale'], not args['--no-dc-notch'], args['--iq-gain'], args['--iq-phase'], args['--calibration-db'], sample_rate)
+            if raw_writer is not None:
+                raw_writer.write_frames(analysis_data, device.rx.frequency)
+            analysis_args = (analysis_data, window_func, freqs[freq_idx][1], device.rx.frequency, fmbw2, bin_width, start_freq, end_freq, curr_time, args['--metric'], args['--full-scale'], not args['--no-dc-notch'], args['--iq-gain'], args['--iq-phase'], args['--calibration-db'], sample_rate, args['--estimator'])
             pending.append(pool.apply_async(analyze_view, analysis_args))
             if len(pending) >= num_workers:
                 q_file.put(pending.pop(0).get())
@@ -701,6 +727,8 @@ def main():
         for result in pending if 'pending' in locals() else []:
             q_file.put(result.get())
         stop_worker_pool(manager, pool, file_process, q_file)
+        if raw_writer is not None:
+            raw_writer.close()
         if rx_data.get('short_callbacks', 0):
             sys.stderr.write("WARNING: discarded %d short RX callbacks\n" % rx_data['short_callbacks'])
         if 'device' in locals() and hasattr(device, 'close'):

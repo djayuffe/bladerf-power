@@ -143,6 +143,18 @@ settle barrier and averages their linear power spectra in the worker. This
 reduces uncorrelated noise while preserving tones, at the cost of N frame
 times per view. Averaging stays outside the callback so the SDR stream remains
 real-time and only complete, epoch-tagged copies enter the worker queue.
+The estimator is selectable: arithmetic mean, median, 20% trimmed mean, or
+20% winsorized mean. Robust estimators reject impulsive interference without
+changing capture timing or callback behavior.
+
+## Raw and SigMF output
+
+The optional `--raw-file` writer stores interleaved little-endian SC16_Q11
+samples beside the analyzed CSV. `--sigmf-prefix PREFIX` writes
+`PREFIX.sigmf-data` plus `PREFIX.sigmf-meta` with `ci16_le` datatype, sample
+rate, and frequency-segment records. The writer consumes the same immutable
+frame copies as the DSP worker, so frequency planning and retune epochs remain
+unchanged.
 
 ## Heatmap stage
 
@@ -167,7 +179,7 @@ time interval is never lost.
   average; do not average inside the hardware callback.
 - Add a binary/SigMF writer beside the CSV writer without changing the planner.
 - Add a renderer palette by returning a list of RGB tuples and registering it
-  in `palette_parse()`.
+  in `palette_parse()`; `thermal` is the reference gradient implementation.
 
 ## Operational limits
 
