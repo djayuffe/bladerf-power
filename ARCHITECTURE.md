@@ -90,6 +90,12 @@ covering samples that arrive after the frequency write but before the device
 has stabilized. This is safer than sleeping alone because the callback
 continues while the LO settles.
 
+After the timer expires, `--settle-frames` discards a configurable number of
+complete frames as an additional guard against PLL/AGC transients. Use zero
+only after validating the device with repeated narrow-band captures; one or two
+discarded frames usually gives better data quality than trying to reduce every
+millisecond of dwell time.
+
 For a new device, capture the same narrow band repeatedly at several settle
 times, compare the first accepted frame with later frames, and choose the
 shortest time that removes frequency splatter or amplitude transients. The

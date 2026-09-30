@@ -27,6 +27,10 @@ Useful capture controls:
 python3 bladerf_power.py 430M:440M:2k --bandwidth 2M --sample-rate 2.4M \
   --settle-time 0.005 --num-workers 4 --file uhf.csv.gz --compress
 
+# Reject two complete frames after each retune when lock transients are severe
+python3 bladerf_power.py 430M:440M:2k --settle-time 0.02 --settle-frames 2 \
+  --file conservative.csv.gz --compress
+
 # Crop and annotate a large capture during rendering
 python3 heatmap.py uhf.csv.gz uhf.png --low 433M --high 435M \
   --db -120 -20 --ytick 1m --palette extended

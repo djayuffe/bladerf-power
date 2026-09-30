@@ -26,6 +26,9 @@
   maintaining requested-or-better bin resolution.
 - Added callback-side settle deadlines so post-retune partial frames cannot
   slip through as valid measurements.
+- Added configurable complete-frame discard after each retune for PLL/AGC
+  transient rejection.
+- Added user-facing heatmap errors for malformed or empty input.
 
 ## Remaining hardware boundary
 

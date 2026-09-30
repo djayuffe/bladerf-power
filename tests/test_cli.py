@@ -20,3 +20,11 @@ class CliTests(unittest.TestCase):
             capture_output=True, text=True,
         )
         self.assertEqual(result.returncode, 2)
+
+    def test_settle_frames_is_exposed(self):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "bladerf_power.py"), "100M:110M:1M",
+             "--dry-run", "--settle-frames", "2"],
+            check=True, capture_output=True, text=True,
+        )
+        self.assertIn("validated sweep", result.stdout)

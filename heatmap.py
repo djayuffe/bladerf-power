@@ -624,9 +624,12 @@ def create_labels(args, img):
 def main():
     global args, raw_data
     print("loading")
-    args = prepare_args()
-    raw_data = open_raw_data(args.input_path)
-    summarize_pass(args)
+    try:
+        args = prepare_args()
+        raw_data = open_raw_data(args.input_path)
+        summarize_pass(args)
+    except (OSError, ValueError, IndexError) as exc:
+        raise SystemExit('cannot read usable heatmap data: %s' % exc) from exc
     print("drawing")
     img = push_pixels(args)
     print("labeling")

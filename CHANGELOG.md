@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.6 — 2026-09-30
+
+- Added configurable `--settle-frames` for post-retune transient rejection.
+- Added clearer heatmap failures for malformed or empty captures.
+
 ## 0.2.5 — 2026-09-30
 
 - Preserved CSV chronology by collecting asynchronous FFT results in order.

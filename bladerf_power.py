@@ -47,7 +47,7 @@ except ImportError:  # allow --help and --version without DSP dependencies
 def get_args():
     parser = argparse.ArgumentParser(description='Receive-only bladeRF spectrum survey')
     parser.add_argument('range', metavar='LOWER:UPPER:BIN_WIDTH')
-    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.2.5')
+    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.2.6')
     parser.add_argument('-f', '--file', default='output.csv')
     parser.add_argument('-z', '--compress', action='store_true')
     parser.add_argument('-e', '--exit-timer', default='0')
@@ -66,6 +66,8 @@ def get_args():
                         help='ADC sample rate; defaults to capture bandwidth')
     parser.add_argument('--settle-time', type=float, default=0.01,
                         help='seconds to wait after each retune (default: 0.01)')
+    parser.add_argument('--settle-frames', type=int, default=1,
+                        help='complete frames to discard after settling (default: 1)')
     parser.add_argument('--dry-run', action='store_true')
     parsed = parser.parse_args()
     return {
@@ -79,6 +81,7 @@ def get_args():
         '--num-samples': parsed.num_samples, '--num-workers': parsed.num_workers,
         '--sample-rate': parsed.sample_rate or parsed.bandwidth,
         '--settle-time': parsed.settle_time,
+        '--settle-frames': parsed.settle_frames,
         '--dry-run': parsed.dry_run,
     }
 
@@ -348,7 +351,11 @@ def rx_callback(device, stream, meta_data, samples, num_samples, user_data):
         # Have we filled completely?  Then take what we need from this buffer, and discard the rest
         data[data_idx:] = in_data[0:(fft_len*2 - data_idx)]
         user_data['data_idx'] = fft_len
-        q_data.put(user_data['epoch'])
+        if user_data.get('discard_frames', 0):
+            user_data['discard_frames'] -= 1
+            user_data['data_idx'] = 0
+        else:
+            q_data.put(user_data['epoch'])
         return stream.next()
 
 
@@ -430,6 +437,9 @@ def main():
         return 2
     if args['--settle-time'] < 0:
         sys.stderr.write("ERROR: settle time cannot be negative\n")
+        return 2
+    if args['--settle-frames'] < 0:
+        sys.stderr.write("ERROR: settle frames cannot be negative\n")
         return 2
     import scipy.signal
     import bladeRF
@@ -513,6 +523,7 @@ def main():
             'q_data': q_data,
             'running': True,
             'epoch': 0,
+            'discard_frames': args['--settle-frames'],
         }
 
         # Initialize device.rx.frequency, then start the stream doing its thing
@@ -546,6 +557,7 @@ def main():
             rx_data['epoch'] += 1
             rx_data['data_idx'] = 0
             rx_data['discard_until'] = monotonic() + args['--settle-time']
+            rx_data['discard_frames'] = args['--settle-frames']
             retune_and_settle(device, freqs[freq_idx][0], args['--settle-time'])
             if freq_idx == 0:
                 curr_time = time()
