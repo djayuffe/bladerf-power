@@ -33,6 +33,7 @@ Options:
 """
 import sys
 import argparse
+SC16_Q11_FULL_SCALE = 2048.0
 try:
     from numpy import *
 except ImportError:  # allow --help and --version without DSP dependencies
@@ -46,7 +47,7 @@ except ImportError:  # allow --help and --version without DSP dependencies
 def get_args():
     parser = argparse.ArgumentParser(description='Receive-only bladeRF spectrum survey')
     parser.add_argument('range', metavar='LOWER:UPPER:BIN_WIDTH')
-    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.2.3')
+    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.2.4')
     parser.add_argument('-f', '--file', default='output.csv')
     parser.add_argument('-z', '--compress', action='store_true')
     parser.add_argument('-e', '--exit-timer', default='0')
@@ -213,6 +214,26 @@ def db(x):
     from numpy import log10, abs
     return 20*log10(abs(x))
 
+
+def fft_dbfs(data, window_func, full_scale=SC16_Q11_FULL_SCALE):
+    """Return window-corrected amplitude dBFS for interleaved SC16 samples.
+
+    SC16_Q11 has 11 fractional bits, so a full-scale complex sample is
+    represented by approximately 2048. Dividing by the window coherent gain
+    makes a bin-centred full-scale tone read close to 0 dBFS rather than
+    changing level with FFT length or window choice.
+    """
+    from numpy.fft import fft
+    samples = data[::2].astype(float) + 1j * data[1::2].astype(float)
+    samples /= float(full_scale)
+    window = window_func(len(samples))
+    coherent_gain = float(window.sum())
+    if coherent_gain <= 0:
+        raise ValueError("FFT window has no coherent gain")
+    spectrum = fft(samples * window) / coherent_gain
+    magnitude = maximum(abs(spectrum), 1e-15)
+    return 20 * log10(magnitude)
+
 def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwidth, bin_width, start_freq, end_freq, timestamp, q_file):
     """
     Perform power spectral analysis on data of length fft_len, passing it off to
@@ -250,13 +271,7 @@ def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwi
     q_file : Queue
         Queue used to communicate with file thread
     """
-    from numpy.fft import fft
-
-    # Convert data from sc16 into complex data
-    data = data[::2] + 1j*data[1::2]
-
-    # Take FFT of this data
-    DATA = fft(data * window_func(len(data)))
+    DATA = fft_dbfs(data, window_func)
 
     # Find start/end frequencies that we get from this FFT, and which bins we
     # want to slice out of the DATA array
@@ -277,7 +292,7 @@ def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwi
     datestr = datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d, %H:%M:%S')
     csv_str = "%s, %d, %d, %.2f, %d, "%(datestr, view_start, view_end, bin_width, len(data))
 
-    csv_str += ", ".join(["%.2f"%(x) for x in db(DATA[bin_start:bin_end])]) + "\n"
+    csv_str += ", ".join(["%.2f"%(x) for x in DATA[bin_start:bin_end]]) + "\n"
 
     # Send csv_str to file_worker
     q_file.put(csv_str)
@@ -313,11 +328,11 @@ def rx_callback(device, stream, meta_data, samples, num_samples, user_data):
         # Have we filled completely?  Then take what we need from this buffer, and discard the rest
         data[data_idx:] = in_data[0:(fft_len*2 - data_idx)]
         user_data['data_idx'] = fft_len
-        q_data.put(fft_len)
+        q_data.put(user_data['epoch'])
         return stream.next()
 
 
-def freq_planning(start_freq, end_freq, bin_width, fmbw2):
+def freq_planning(start_freq, end_freq, bin_width, fmbw2, min_tune_freq=0):
     """
     Given frequency parameters, returns a list of (center_frequency,
     lower_sideband) tuples, denoting the center frequency of each tuning view,
@@ -344,12 +359,13 @@ def freq_planning(start_freq, end_freq, bin_width, fmbw2):
         A list of views describing a center frequency to tune to and which
         sideband to observe, upper or lower (true signifies lower sideband).
     """
-    import bladeRF
-
+    from math import ceil
+    if not (end_freq > start_freq > min_tune_freq and bin_width > 0 and fmbw2 > 0):
+        raise ValueError("invalid frequency plan parameters")
     # First frequency is always the same; either just below start_freq or at
     # start_freq + bandwidth/2 - binwidth, in the case that start_freq is really
     # close to the minimum frequency we can tune to:
-    if start_freq - bin_width >= bladeRF.FREQUENCY_MIN:
+    if start_freq - bin_width >= min_tune_freq:
         # Put center_freq just below start_freq if we are not at the minimum frequency
         freqs = [(start_freq - bin_width, False)]
     else:
@@ -429,7 +445,7 @@ def main():
     # effective bin_width given our bandwidth and number of bins
     fmbw2 = round(filter_margin*(bandwidth/2)*fft_len)/fft_len
 
-    freqs = freq_planning(start_freq, end_freq, bin_width, fmbw2)
+    freqs = freq_planning(start_freq, end_freq, bin_width, fmbw2, bladeRF.FREQUENCY_MIN)
     num_views = len(freqs)
 
     device.lna_gain = int_or_attr(args['--lna-gain'])
@@ -468,21 +484,26 @@ def main():
             'data_idx': 0,
             'fft_len': fft_len,
             'q_data': q_data,
-            'running': True
+            'running': True,
+            'epoch': 0,
         }
 
         # Initialize device.rx.frequency, then start the stream doing its thing
         device.rx.frequency = freqs[0][0]
         sleep(args['--settle-time'])
         stream = device.rx.stream(rx_callback, num_buffers, bladeRF.FORMAT_SC16_Q11, num_samples, num_transfers, user_data=rx_data)
-        threading.Thread(target=run_stream, args=(stream,)).start()
+        stream_thread = threading.Thread(target=run_stream, args=(stream,), daemon=True)
+        stream_thread.start()
 
         sys.stderr.write("Scanning from %sHz to %sHz, using %d views of %sHz with %d bins %sHz wide\n"%(suffixed(start_freq), suffixed(end_freq), num_views, suffixed(fmbw2), fft_len/2, suffixed(bin_width)))
 
         # Now zoom through frequencies like it's your day off
         freq_idx = 0
         while exit_timer == 0 or curr_time - start_time <= exit_timer:
-            samples_received = q_data.get()
+            while True:
+                frame_epoch = q_data.get()
+                if frame_epoch == rx_data['epoch']:
+                    break
 
             # Now that we have the data, apply it to the pool
             # The callback reuses its buffer; copy before handing it to a worker.
@@ -492,9 +513,10 @@ def main():
 
             # If not, move on to the next frequency
             freq_idx = (freq_idx + 1)%len(freqs)
+            rx_data['epoch'] += 1
+            rx_data['data_idx'] = 0
             device.rx.frequency = freqs[freq_idx][0]
             sleep(args['--settle-time'])
-            rx_data['data_idx'] = 0
             if freq_idx == 0:
                 curr_time = time()
 
@@ -516,6 +538,10 @@ def main():
     finally:
         print() # Clear out the status_line stuffage
         rx_data['running'] = False
+        if 'stream' in locals() and hasattr(stream, 'stop'):
+            stream.stop()
+        if 'stream_thread' in locals():
+            stream_thread.join(timeout=2)
         stop_worker_pool(manager, pool, file_process, q_file)
         print("Done stopping the worker pool!")
 

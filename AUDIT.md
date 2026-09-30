@@ -17,6 +17,9 @@
 - Replaced fragile SciPy window attribute lookup with validated `get_window`.
 - Kept worker manager lifetime explicit and shut down workers cleanly.
 - Added empty-range and floating-point heatmap guards.
+- Added SC16_Q11 normalization and FFT coherent-gain correction for stable
+  amplitude dBFS math.
+- Added per-retune epochs so frames captured during LO settling are discarded.
 
 ## Remaining hardware boundary
 

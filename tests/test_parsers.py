@@ -20,6 +20,22 @@ class ParserTests(unittest.TestCase):
     def test_zero_formatting(self):
         self.assertEqual(module.suffixed(0), "0")
 
+    def test_frequency_plan_is_contiguous(self):
+        plan = module.freq_planning(100, 1_000, 10, 200)
+        self.assertGreaterEqual(len(plan), 1)
+        self.assertEqual(plan[0][0], 90)
+
+    def test_fft_normalization(self):
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("numpy is not installed")
+        n = 128
+        raw = np.zeros(n * 2, dtype=np.int16)
+        raw[::2] = 2048
+        values = module.fft_dbfs(raw, lambda size: np.ones(size))
+        self.assertAlmostEqual(float(values[0]), 0.0, places=5)
+
 
 if __name__ == "__main__":
     unittest.main()

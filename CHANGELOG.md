@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.4 — 2026-09-30
+
+- Added SC16_Q11 full-scale normalization and window coherent-gain correction.
+- Added per-retune epochs to discard frames captured during LO settling.
+- Added frequency-plan and FFT-normalization regression tests.
+- Documented measurement math, calibration limits, and lock methodology.
+
 ## 0.2.3 — 2026-09-30
 
 - Expanded README with tuning, output-format, and operating guidance.

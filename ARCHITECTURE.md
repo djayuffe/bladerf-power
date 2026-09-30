@@ -58,6 +58,39 @@ single-owner prevents interleaved rows and makes gzip output safe without shell
 redirection. Worker and manager shutdown is explicit so normal termination
 does not leak child processes.
 
+## Measurement math
+
+SC16 samples are interpreted as complex signed 16-bit I/Q pairs and normalized
+by the SC16_Q11 full-scale value (2048). Each frame is windowed and its FFT is
+divided by the window coherent gain, `sum(window)`, before conversion to
+amplitude dBFS:
+
+```text
+samples = (I + jQ) / 2048
+A[k] = abs(FFT(samples * window)[k]) / sum(window)
+dBFS[k] = 20 * log10(max(A[k], 1e-15))
+```
+
+This makes a bin-centred full-scale complex tone approximately 0 dBFS and
+prevents FFT length/window choice from changing its nominal level. It is not
+calibrated dBm; antenna gain, front-end loss, device calibration, and window
+noise bandwidth still require an external reference.
+
+## Retune and lock methodology
+
+Every view has an epoch. The callback tags completed frames with that epoch;
+the main loop increments it before changing frequency, resets the partial
+frame, applies the retune, and waits `--settle-time`. Frames captured during
+the transition are discarded by epoch rather than analyzed as the new
+frequency. This is safer than sleeping alone because the callback continues
+while the LO settles.
+
+For a new device, capture the same narrow band repeatedly at several settle
+times, compare the first accepted frame with later frames, and choose the
+shortest time that removes frequency splatter or amplitude transients. The
+software does not claim a hardware PLL lock bit; the epoch/settle method is a
+data-quality barrier.
+
 ## Heatmap stage
 
 `heatmap.py` scans the input once to determine the time/frequency grid and DB
