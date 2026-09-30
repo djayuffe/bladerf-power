@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bladerf-power"
+version = "0.2.0"
+description = "Receive-only bladeRF spectrum survey and heatmap tools"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.23", "scipy>=1.9", "Pillow>=9.0"]
+
+[project.scripts]
+bladerf-power = "bladerf_power:main"
+bladerf-heatmap = "heatmap:main"
+
+[tool.setuptools]
+py-modules = ["bladerf_power", "heatmap"]
