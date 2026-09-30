@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3 — 2026-09-30
+
+- Expanded README with tuning, output-format, and operating guidance.
+- Added `ARCHITECTURE.md` documenting planner, lock settling, FFT workers,
+  ordered CSV output, and the two-pass heatmap renderer.
+
 ## 0.2.2 — 2026-09-30
 
 - Added safer retune settling and configurable ADC sample rate.

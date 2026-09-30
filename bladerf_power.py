@@ -46,7 +46,7 @@ except ImportError:  # allow --help and --version without DSP dependencies
 def get_args():
     parser = argparse.ArgumentParser(description='Receive-only bladeRF spectrum survey')
     parser.add_argument('range', metavar='LOWER:UPPER:BIN_WIDTH')
-    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.2.2')
+    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.2.3')
     parser.add_argument('-f', '--file', default='output.csv')
     parser.add_argument('-z', '--compress', action='store_true')
     parser.add_argument('-e', '--exit-timer', default='0')
