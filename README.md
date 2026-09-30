@@ -31,6 +31,10 @@ python3 bladerf_power.py 430M:440M:2k --bandwidth 2M --sample-rate 2.4M \
 python3 bladerf_power.py 430M:440M:2k --settle-time 0.02 --settle-frames 2 \
   --file conservative.csv.gz --compress
 
+# Export calibrated PSD instead of amplitude dBFS
+python3 bladerf_power.py 100M:110M:5k --metric psd --calibration-db 2.3 \
+  --iq-gain 0.998 --iq-phase -0.4 --file calibrated.csv
+
 # Crop and annotate a large capture during rendering
 python3 heatmap.py uhf.csv.gz uhf.png --low 433M --high 435M \
   --db -120 -20 --ytick 1m --palette extended
@@ -58,6 +62,9 @@ current binding supported by your libbladeRF release.
   without SDR/DSP dependencies.
 - Removed shell interpolation from gzip output and added UTF-8 handling.
 - Added validation for sweep direction and bin width.
+- Added amplitude dBFS, power dBFS, and PSD dBFS/Hz metrics.
+- Added SC16 clipping counts, DC removal, IQ gain/phase correction, and
+  calibration offsets.
 - Added configurable ADC sample rate, post-retune settling, and validated FFT
   window selection for more reliable tuning/lock behavior.
 - Asynchronous FFT workers now receive immutable per-frame copies, preventing

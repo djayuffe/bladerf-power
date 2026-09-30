@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 — 2026-09-30
+
+- Added reusable DSP math for amplitude dBFS, power dBFS, and PSD dBFS/Hz.
+- Added DC-notch, IQ gain/phase, calibration-offset, and clipping controls.
+- Added synthetic math tests for SC16 conversion, tone normalization, and ENBW.
+
 ## 0.2.7 — 2026-09-30
 
 - Hardened heatmap CSV parsing and fractional timestamp support.

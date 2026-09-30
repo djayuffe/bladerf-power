@@ -79,6 +79,14 @@ prevents FFT length/window choice from changing its nominal level. It is not
 calibrated dBm; antenna gain, front-end loss, device calibration, and window
 noise bandwidth still require an external reference.
 
+The DSP layer also supports power dBFS and PSD dBFS/Hz. PSD divides by sample
+rate and window equivalent noise bandwidth, which makes noise measurements
+comparable across FFT sizes and windows. Optional DC removal, IQ gain/phase
+correction, and a user-supplied calibration offset are applied before the FFT.
+Frames that contain signed-16-bit clipping are counted so a survey can flag
+overload rather than treating it as a real signal. For SC16_Q11 the nominal
+sample range is approximately +/-2048, not the full int16 range.
+
 ## Retune and lock methodology
 
 Every view has an epoch. The callback tags completed frames with that epoch;

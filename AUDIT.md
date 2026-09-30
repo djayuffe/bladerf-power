@@ -33,6 +33,9 @@
   timestamps, final compressed-bucket flushing, and O(1) timestamp lookup.
 - Removed obsolete network-download code and made bundled-font lookup robust
   when installed as a package.
+- Added a reusable `spectrum_math.py` DSP layer with amplitude/power/PSD
+  metrics, ENBW correction, DC/IQ correction, calibration offsets, and clipping
+  diagnostics.
 
 ## Remaining hardware boundary
 
