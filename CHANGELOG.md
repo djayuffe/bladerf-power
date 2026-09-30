@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1 — 2026-09-30
+
+- Expanded README with project scope, capture workflow, CLI reference, output
+  semantics, troubleshooting, and a complete end-to-end example.
+- Expanded architecture notes with backend compatibility and effective ADC
+  bandwidth/sample-rate planning.
+- Added focused GitHub repository description and SDR/SC16_Q11 discovery tags.
+
 ## 0.5.0 — 2026-09-30
 
 - Added a compatibility adapter for the current Nuand `bladerf.BladeRF`

@@ -30,10 +30,21 @@ The capture and render stages are deliberately independent. Capturing touches
 hardware and can run for hours; rendering is offline, repeatable, and can be
 re-run with different crops, palettes, DB limits, and time compression.
 
+## Backend compatibility
+
+The planner and DSP code do not depend on one particular Python binding. The
+legacy `bladeRF.Device` backend receives callback buffers; the current Nuand
+`bladerf.BladeRF` backend is adapted by `bladerf_backend.py` and receives
+synchronous buffers from `sync_rx`. Both expose the same internal contract:
+interleaved SC16_Q11 bytes become complete epoch-tagged frames, are copied
+before worker dispatch, and are closed through the same shutdown path. This
+keeps API compatibility code out of frequency planning and measurement math.
+
 ## Capture stage
 
 `bladerf_power.py` parses human-readable frequency/time suffixes, validates the
-range, and computes an FFT length from the requested bandwidth and bin width.
+range, configures RX, reads back the effective bandwidth/sample rate, and
+computes an FFT length from the effective ADC rate and requested bin width.
 The frequency planner creates adjacent tuning views with a filter-margin
 overlap so edge bins are discarded where anti-aliasing leakage is strongest.
 
@@ -47,7 +58,11 @@ After every retune, `--settle-time` gives the tuner/LO time to lock before the
 next frame is accepted. The default is conservative; lower it only after
 checking repeated captures on the specific device and firmware. A separate
 `--sample-rate` allows the ADC rate to differ from the analog capture
-bandwidth, while `--bandwidth` remains the filter/FFT planning bandwidth.
+bandwidth, while `--bandwidth` remains the analog filter setting. The planner
+quantizes useful view width to whole FFT bins and uses the narrower of the
+analog filter bandwidth and ADC sample rate. This prevents a requested 28 MHz
+filter from being mistaken for 28 MHz of usable complex sample span when the
+ADC is configured below that rate.
 
 ## FFT and writer stage
 
@@ -153,3 +168,9 @@ The hardware path depends on a compatible bladeRF Python binding and
 `libbladeRF`. No hardware is required for tests or `--dry-run`. This project
 does not transmit and does not implement device calibration, clock discipline,
 or regulatory band-plan enforcement; those remain deployment responsibilities.
+
+The software cannot infer antenna response, absolute RF power, external clock
+quality, USB signal integrity, or a hardware PLL lock bit. Those are measured
+or verified at deployment. Read-back settings, clipping counts, settle
+barriers, and stream-error diagnostics make those limits visible in the data
+instead of silently hiding them.

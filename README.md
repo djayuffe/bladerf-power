@@ -10,6 +10,24 @@ captures restartable, compressible, and safe to analyze on another machine.
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the complete data path and
 extension points.
 
+## What this project does
+
+`bladerf-power` turns a bladeRF receiver into a repeatable, receive-only
+spectrum survey instrument. It plans overlapping tuning views, waits for the
+LO/AGC path to settle, captures SC16_Q11 I/Q frames, computes calibrated FFT
+metrics, and writes an ordered CSV stream. `heatmap.py` then renders that
+stream as a time/frequency PNG without loading the entire capture into RAM.
+
+The project is designed for unattended surveys and post-processing:
+
+- hardware capture and offline rendering are separate commands;
+- compressed CSV is streamable and restart-friendly;
+- amplitude, power, and PSD outputs share one tested DSP implementation;
+- current and legacy Nuand Python bindings use the same capture contract;
+- every result retains the effective bin width and device-selected ADC rate;
+- clipping, DC offset, IQ correction, calibration, and retune diagnostics are
+  explicit rather than hidden in a “magic” normalization constant.
+
 ## Quick start
 
 Create a Python 3.10+ environment and install the analysis dependencies:
@@ -65,6 +83,57 @@ Both the historical `bladeRF.Device` callback API and the current
 tree was intentionally removed because it is Python 2-era generated code; use
 a binding supported by your libbladeRF release.
 
+For a source checkout, the analysis-only install is sufficient for `--dry-run`
+and heatmap rendering. Install the binding supplied by your platform’s
+libbladeRF package for hardware capture; keep the binding and firmware/FPGA
+versions matched. Verify the device first with `bladeRF-cli -p` or the Nuand
+device-operation checks before starting a long survey.
+
+## Capture workflow
+
+1. Start with `--dry-run` to validate the range, units, filter margin, rate,
+   settling, and averaging settings.
+2. Run a short narrow-band capture with a conservative settle time and one or
+   two settle frames. Inspect clipping and the first few rows before widening
+   the sweep.
+3. Increase `--num-workers` only when CPU is the bottleneck; USB/host transfer
+   loss is never fixed by adding FFT workers.
+4. Use `--average-frames` to trade sweep speed for lower uncorrelated noise.
+   It averages linear power after the retune barrier, not logarithmic dB rows.
+5. Render the capture offline with `heatmap.py`, then crop and adjust the dB
+   range without touching the original data.
+
+Example end-to-end run:
+
+```sh
+python3 bladerf_power.py 433M:435M:2k \
+  --bandwidth 2M --sample-rate 2.4M \
+  --settle-time 0.02 --settle-frames 2 --average-frames 2 \
+  --metric psd --file 433mhz.csv.gz --compress
+python3 heatmap.py 433mhz.csv.gz 433mhz.png \
+  --low 433M --high 435M --db -130 -20 --palette extended
+```
+
+## CLI reference
+
+The positional range is `LOWER:UPPER:BIN_WIDTH`; suffixes `k`, `M`, `G`, `T`,
+`P`, and `E` are accepted. Important controls are:
+
+| Option | Purpose |
+| --- | --- |
+| `--bandwidth` | Requested analog RX filter bandwidth. The device may quantize it. |
+| `--sample-rate` | Requested ADC rate. FFT spacing uses the read-back value. |
+| `--filter-margin` | Fraction of the usable half-band retained per tuning view. |
+| `--settle-time` / `--settle-frames` | Retune lock barrier and transient rejection. |
+| `--average-frames` | Number of accepted frames averaged in linear power. |
+| `--metric amplitude\|power\|psd` | Output dBFS amplitude, dBFS power, or dBFS/Hz PSD. |
+| `--window-type` | Any window accepted by `scipy.signal.get_window`. |
+| `--iq-gain` / `--iq-phase` | Optional complex IQ correction before the FFT. |
+| `--calibration-db` | External absolute calibration offset. |
+| `--num-workers` | Parallel FFT workers; CSV writing remains ordered. |
+
+Run `python3 bladerf_power.py --help` for the complete option list.
+
 ## Changes in the audited port
 
 - Python 3 CLI using `argparse`; `--help`, `--version`, and `--dry-run` work
@@ -100,6 +169,13 @@ fail with actionable errors. The bundled font is resolved relative to the
 installed module, so `bladerf-heatmap` works outside the source directory and
 never downloads assets.
 
+The CSV values are dBFS-derived measurements, not absolute dBm. Convert to
+dBm only after applying a traceable external calibration for the antenna,
+cable/filter losses, front-end gain, and device frequency response. A row’s
+`sample count` is the number of complex ADC samples represented by each FFT;
+the effective bin width is the fourth field and is based on the actual device
+sample rate.
+
 ## Project layout
 
 - `bladerf_power.py` — capture planner, retune loop, SC16 FFT analysis, and
@@ -108,12 +184,33 @@ never downloads assets.
 - `tests/` — hardware-free parser and CLI regression tests.
 - `Vera.ttf` — bundled renderer font; no network access is needed at runtime.
 - `ARCHITECTURE.md` — design, tuning, concurrency, and extension notes.
+- `AUDIT.md` — audit history, compatibility boundary, and deliberate limits.
+- `CHANGELOG.md` — release history and user-visible changes.
 
 ## Safety
 
 This project is receive-only. Do not transmit, monitor restricted services, or
 collect data without authorization. Follow local spectrum rules and calibrate
 the bladeRF before interpreting results.
+
+## Troubleshooting
+
+- **No device / binding import error:** install matching libbladeRF runtime,
+  firmware, FPGA image, and Nuand Python bindings; then verify with
+  `bladeRF-cli -p`.
+- **Requested rate differs from the log:** this is expected when libbladeRF
+  selects the nearest supported hardware value. The log and CSV use the
+  read-back rate for FFT math.
+- **Many clipped samples:** reduce manual gain, use a front-end attenuator,
+  or narrow the measurement path. Clipping is overload, not a stronger useful
+  signal.
+- **Splatter after every retune:** increase `--settle-time` and
+  `--settle-frames`; compare repeated captures before optimizing dwell time.
+- **Dropped/short stream callbacks:** reduce sample rate or buffer pressure,
+  increase USB/transfer buffers, and check host USB bandwidth before increasing
+  FFT workers.
+- **Noisy but stable trace:** use `--average-frames`, a suitable window, and
+  PSD mode for comparisons across FFT sizes.
 
 ## Hardware and ADC references
 
