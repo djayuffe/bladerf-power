@@ -29,6 +29,10 @@
 - Added configurable complete-frame discard after each retune for PLL/AGC
   transient rejection.
 - Added user-facing heatmap errors for malformed or empty input.
+- Switched heatmap parsing to the CSV module and fixed fractional Unix/ISO
+  timestamps, final compressed-bucket flushing, and O(1) timestamp lookup.
+- Removed obsolete network-download code and made bundled-font lookup robust
+  when installed as a package.
 
 ## Remaining hardware boundary
 

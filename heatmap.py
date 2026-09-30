@@ -1,29 +1,12 @@
 #! /usr/bin/env python
 
 from PIL import Image, ImageDraw, ImageFont
-import os, sys, gzip, math, argparse, colorsys, datetime
+import os, sys, gzip, math, argparse, colorsys, datetime, csv
+from pathlib import Path
 from collections import defaultdict
 from itertools import *
 
-urlretrieve = lambda a, b: None
-try:
-    import urllib.request
-    urlretrieve = urllib.request.urlretrieve
-except:
-    import urllib
-    urlretrieve = urllib.urlretrieve
-
-# todo:
-# matplotlib powered --interactive
-# arbitrary freq marker spacing
-# ppm
-# blue-less marker grid
-# fast summary thing
-# gain normalization
-# check pil version for brokenness
-
-vera_url = "https://github.com/keenerd/rtl-sdr-misc/raw/master/heatmap/Vera.ttf"
-vera_path = os.path.join(sys.path[0], "Vera.ttf")
+vera_path = str(Path(__file__).resolve().with_name("Vera.ttf"))
 
 tape_height = 25
 tape_pt = 10
@@ -66,6 +49,8 @@ def build_parser():
     return parser
 
 def frange(start, stop, step):
+    if step <= 0:
+        raise ValueError('frequency step must be positive')
     i = 0
     while (i*step + start <= stop):
         yield i*step + start
@@ -108,6 +93,8 @@ def floatify(zs):
     return zs2
 
 def freq_parse(s):
+    if not s:
+        raise ValueError('empty frequency')
     suffix = 1
     if s.lower().endswith('k'):
         suffix = 1e3
@@ -117,9 +104,14 @@ def freq_parse(s):
         suffix = 1e9
     if suffix != 1:
         s = s[:-1]
-    return float(s) * suffix
+    value = float(s) * suffix
+    if not math.isfinite(value):
+        raise ValueError('frequency must be finite')
+    return value
 
 def duration_parse(s):
+    if not s:
+        raise ValueError('empty duration')
     suffix = 1
     if s.lower().endswith('s'):
         suffix = 1
@@ -131,11 +123,14 @@ def duration_parse(s):
         suffix = 24 * 60 * 60
     if suffix != 1 or s.lower().endswith('s'):
         s = s[:-1]
-    return float(s) * suffix
+    value = float(s) * suffix
+    if not math.isfinite(value) or value < 0:
+        raise ValueError('duration must be finite and non-negative')
+    return value
 
 def date_parse(s):
     if '-' not in s:
-        return datetime.datetime.fromtimestamp(int(s))
+        return datetime.datetime.fromtimestamp(float(s))
     for fmt in ('%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S'):
         try:
             return datetime.datetime.strptime(s, fmt)
@@ -175,10 +170,6 @@ def reparse(args, label, fn):
     args.__setattr__(label, fn(args.__getattribute__(label)))
 
 def prepare_args():
-    # hack, http://stackoverflow.com/questions/9025204/
-    for i, arg in enumerate(sys.argv):
-        if (arg[0] == '-') and arg[1].isdigit():
-            sys.argv[i] = ' ' + arg
     parser = build_parser()
     args = parser.parse_args()
 
@@ -241,9 +232,10 @@ def summarize_pass(args):
     start, stop = None, None
 
     for line in raw_data():
-        line = [s.strip() for s in line.strip().split(',')]
-        #line = [line[0], line[1]] + [float(s) for s in line[2:] if s]
+        line = [s.strip() for s in next(csv.reader([line]))]
         line = [s for s in line if s]
+        if len(line) < 7:
+            raise ValueError('malformed CSV row: expected metadata and dB bins')
 
         low  = int(line[2]) + args.offset_freq
         high = int(line[3]) + args.offset_freq
@@ -375,9 +367,10 @@ def collate_row(x_size):
     old_t = None
     row = [0.0] * x_size
     for line in raw_data():
-        line = [s.strip() for s in line.strip().split(',')]
-        #line = [line[0], line[1]] + [float(s) for s in line[2:] if s]
+        line = [s.strip() for s in next(csv.reader([line]))]
         line = [s for s in line if s]
+        if len(line) < 7:
+            raise ValueError('malformed CSV row: expected metadata and dB bins')
         t = line[0] + ' ' + line[1]
         if '-' not in line[0]:
             t = line[0]
@@ -422,8 +415,9 @@ def push_pixels(args):
     tally = 0
     old_y = None
     height = len(args.times)
+    args.time_index = {timestamp: index for index, timestamp in enumerate(args.times)}
     for t, zs in collate_row(x_size):
-        y = args.times.index(t)
+        y = args.time_index[t]
         if not args.compress:
             for x in range(len(zs)):
                 pix[x,y+tape_height] = rgb(zs[x])
@@ -441,6 +435,9 @@ def push_pixels(args):
         for x in range(len(zs)):
             average[x] += zs[x]
         tally += 1
+    if args.compress and tally and old_y is not None:
+        for x in range(len(average)):
+            pix[x, old_y + tape_height] = rgb(average[x] / tally)
     return img
 
 def closest_index(n, m_list, interpolate=False):

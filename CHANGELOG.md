@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.7 — 2026-09-30
+
+- Hardened heatmap CSV parsing and fractional timestamp support.
+- Fixed final compressed-bucket rendering and timestamp lookup performance.
+- Made installed font resolution deterministic and removed dead network code.
+- Added heatmap parser, palette, and slice regression coverage.
+
 ## 0.2.6 — 2026-09-30
 
 - Added configurable `--settle-frames` for post-retune transient rejection.

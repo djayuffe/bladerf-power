@@ -111,6 +111,11 @@ so large captures can be cropped without creating an intermediate file.
 
 The renderer clamps palette indices, handles constant-value captures, supports
 plain or gzip CSV, and uses the bundled Vera font. It never downloads assets.
+CSV parsing uses Python's CSV reader rather than string splitting, accepts
+fractional Unix timestamps and fractional ISO seconds, rejects malformed rows,
+and maps rendered timestamps through an index table instead of repeated linear
+searches. The final compressed pixel bucket is explicitly flushed so the last
+time interval is never lost.
 
 ## Extension points
 

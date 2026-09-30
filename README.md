@@ -71,7 +71,14 @@ current binding supported by your libbladeRF release.
 Each CSV row contains timestamp, lower frequency, upper frequency, bin width,
 sample count, and dB values. Files may be plain UTF-8 CSV or gzip-compressed
 CSV. The heatmap reader accepts both forms, supports frequency/time cropping,
-DB range control, palettes, time compression, and timestamp tick marks.
+DB range control, palettes, time compression, fractional timestamps, and
+timestamp tick marks. It performs two passes, so automatic DB limits reflect
+the selected crop rather than the entire capture.
+
+Malformed rows, empty crops, invalid suffixes, and non-positive frequency steps
+fail with actionable errors. The bundled font is resolved relative to the
+installed module, so `bladerf-heatmap` works outside the source directory and
+never downloads assets.
 
 ## Project layout
 
