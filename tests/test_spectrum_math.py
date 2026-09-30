@@ -10,9 +10,9 @@ class SpectrumMathTests(unittest.TestCase):
         except ImportError as exc:
             raise unittest.SkipTest(str(exc))
         cls.np = np
-        cls.analyze_sc16 = analyze_sc16
-        cls.sc16_to_complex = sc16_to_complex
-        cls.window_metrics = window_metrics
+        cls.analyze_sc16 = staticmethod(analyze_sc16)
+        cls.sc16_to_complex = staticmethod(sc16_to_complex)
+        cls.window_metrics = staticmethod(window_metrics)
 
     def test_q11_conversion_and_clipping(self):
         raw = self.np.array([2047, -2048, 32767, 0], dtype=self.np.int16)

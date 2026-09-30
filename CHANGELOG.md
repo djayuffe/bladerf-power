@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 — 2026-09-30
+
+- Corrected synthetic DSP test binding so the NumPy-backed CI suite executes
+  the intended functions rather than passing the test instance implicitly.
+
 ## 0.3.0 — 2026-09-30
 
 - Added reusable DSP math for amplitude dBFS, power dBFS, and PSD dBFS/Hz.
