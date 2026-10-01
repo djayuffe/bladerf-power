@@ -43,6 +43,15 @@ four-byte complex-sample payload rate, effective readback rate, and utilization.
 It measures transport capacity only; it does not claim RF sensitivity or prove
 that a particular antenna/gain configuration is unclipped.
 
+## Calibration-table integration
+
+`calibration.py` validates Nuand binary table magic, filename/serial naming,
+size, direction, and SHA-256 provenance, then can install the file into the
+documented per-user libbladeRF search directory. Capture opens the device only
+after validation/installation, allowing libbladeRF to apply its own nearest
+frequency correction entry during each retune. The application does not parse
+or reinterpret the opaque DC/IQ coefficients as power calibration.
+
 ## Backend compatibility
 
 The planner and DSP code do not depend on one particular Python binding. The

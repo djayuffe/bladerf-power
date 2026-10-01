@@ -47,12 +47,16 @@ except ImportError:  # allow --help and --version without DSP dependencies
 def get_args():
     parser = argparse.ArgumentParser(description='Receive-only bladeRF spectrum survey')
     parser.add_argument('range', metavar='LOWER:UPPER:BIN_WIDTH')
-    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.7.2')
+    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.8.0')
     parser.add_argument('-f', '--file', default='output.csv')
     parser.add_argument('--raw-file', default=None,
                         help='optional raw little-endian SC16_Q11 output')
     parser.add_argument('--sigmf-prefix', default=None,
                         help='optional SigMF prefix (writes .sigmf-data/.sigmf-meta)')
+    parser.add_argument('--calibration-file', default=None,
+                        help='Nuand <serial>_dc_rx.tbl file to validate/use')
+    parser.add_argument('--install-calibration', action='store_true',
+                        help='install --calibration-file in the libbladeRF search directory')
     parser.add_argument('-z', '--compress', action='store_true')
     parser.add_argument('-e', '--exit-timer', default='0')
     parser.add_argument('-b', '--bandwidth', default='28M')
@@ -92,6 +96,8 @@ def get_args():
         '<lower:upper:bin_width>': parsed.range,
         '--file': parsed.file, '--compress': parsed.compress,
         '--raw-file': parsed.raw_file, '--sigmf-prefix': parsed.sigmf_prefix,
+        '--calibration-file': parsed.calibration_file,
+        '--install-calibration': parsed.install_calibration,
         '--exit-timer': parsed.exit_timer, '--bandwidth': parsed.bandwidth,
         '--filter-margin': parsed.filter_margin, '--window-type': parsed.window_type,
         '--lna-gain': parsed.lna_gain, '--rx-vga1': parsed.rx_vga1,
@@ -505,6 +511,20 @@ def main():
     if args['--raw-file'] and args['--sigmf-prefix']:
         sys.stderr.write("ERROR: choose either --raw-file or --sigmf-prefix\n")
         return 2
+    calibration_info = None
+    if args['--calibration-file']:
+        try:
+            from calibration import inspect_calibration, install_calibration
+            if args['--install-calibration'] and not args['--dry-run']:
+                calibration_info = install_calibration(args['--calibration-file'])
+            else:
+                calibration_info = inspect_calibration(args['--calibration-file'])
+        except (FileNotFoundError, ValueError, OSError) as exc:
+            sys.stderr.write("ERROR: invalid calibration file: %s\n" % exc)
+            return 2
+    elif args['--install-calibration']:
+        sys.stderr.write("ERROR: --install-calibration requires --calibration-file\n")
+        return 2
     if args['--average-frames'] < 1:
         sys.stderr.write("ERROR: average frames must be positive\n")
         return 2
@@ -513,6 +533,8 @@ def main():
         return 2
     if args['--dry-run']:
         print("validated sweep: %.0fHz..%.0fHz, %.3fHz bins, metric=%s, estimator=%s, settle=%gs/%d frames, average=%d" % (start_freq, end_freq, bin_width, args['--metric'], args['--estimator'], args['--settle-time'], args['--settle-frames'], args['--average-frames']))
+        if calibration_info:
+            print("calibration: %s (%s, %d bytes)" % (calibration_info['filename'], calibration_info['direction'], calibration_info['bytes']))
         return 0
     import scipy.signal
     try:
@@ -655,6 +677,8 @@ def main():
         stream_thread.start()
 
         sys.stderr.write("Scanning from %sHz to %sHz, using %d views of %sHz (BW %sHz, Fs %sHz) with %d bins %sHz wide\n"%(suffixed(start_freq), suffixed(end_freq), num_views, suffixed(fmbw2), suffixed(bandwidth), suffixed(sample_rate), fft_len/2, suffixed(bin_width)))
+        if calibration_info:
+            sys.stderr.write("Using validated calibration table %s; libbladeRF applies nearest frequency correction on retune\n" % calibration_info['filename'])
 
         # Now zoom through frequencies like it's your day off
         freq_idx = 0

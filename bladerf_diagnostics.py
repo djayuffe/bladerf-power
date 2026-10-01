@@ -288,14 +288,31 @@ def main(argv=None):
     parser.add_argument("--usb-buffer-sizes", default=None,
                         help="comma-separated USB test buffer sizes")
     parser.add_argument("--device", default="", help="optional bladeRF identifier for readback")
+    parser.add_argument("--calibration-file", default=None,
+                        help="inspect a Nuand <serial>_dc_rx.tbl calibration table")
+    parser.add_argument("--install-calibration", action="store_true",
+                        help="install --calibration-file in libbladeRF's search directory")
     parser.add_argument("--fft-sizes", default="256,1024,4096",
                         help="comma-separated benchmark FFT sizes")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     args = parser.parse_args(argv)
-    if not (args.self_test or args.benchmark or args.auto_configure or args.usb_test):
+    if not (args.self_test or args.benchmark or args.auto_configure or args.usb_test or args.calibration_file):
         parser.error("select --self-test, --benchmark, --auto-configure, or --usb-test")
     report = {}
+    if args.install_calibration and not args.calibration_file:
+        parser.error("--install-calibration requires --calibration-file")
+    if args.calibration_file:
+        from calibration import inspect_calibration, install_calibration
+        try:
+            report["calibration"] = (install_calibration(args.calibration_file)
+                                      if args.install_calibration
+                                      else inspect_calibration(args.calibration_file))
+        except (FileNotFoundError, ValueError, OSError) as exc:
+            report["calibration"] = {"status": "invalid", "error": str(exc)}
+            if not (args.self_test or args.benchmark or args.auto_configure or args.usb_test):
+                print(json.dumps(report, indent=2, sort_keys=True))
+                return 2
     if args.self_test or args.auto_configure:
         report["self_test"] = run_self_test()
     if args.benchmark or args.auto_configure:
@@ -322,7 +339,8 @@ def main(argv=None):
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         print(json.dumps(report, indent=2, sort_keys=True))
-    return 0 if report.get("self_test", {}).get("checks", {}).get("all_checks_pass", True) else 1
+    calibration_ok = report.get("calibration", {}).get("status", "ok") != "invalid"
+    return 0 if calibration_ok and report.get("self_test", {}).get("checks", {}).get("all_checks_pass", True) else 1
 
 
 if __name__ == "__main__":

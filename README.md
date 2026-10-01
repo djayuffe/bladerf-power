@@ -84,6 +84,39 @@ Validate a sweep without a bladeRF, driver, NumPy, or SciPy:
 python3 bladerf_power.py 100M:110M:1M --dry-run
 ```
 
+## Using a Nuand DC calibration table
+
+Nuand `<serial>_dc_rx.tbl` files are binary DC/IQ correction tables. They are
+not dB gain curves and must not be fed through the `--calibration-db` option.
+Inspect one safely with:
+
+```sh
+bladerf-diagnostics --calibration-file 43697856d8bd507e045e327026d15403_dc_rx.tbl --json
+```
+
+Install it into libbladeRF's per-user search directory before opening the
+device:
+
+```sh
+bladerf-diagnostics --calibration-file 43697856d8bd507e045e327026d15403_dc_rx.tbl \
+  --install-calibration --json
+```
+
+Or validate and install it as part of a capture:
+
+```sh
+bladerf-power 433M:435M:2k --calibration-file 43697856d8bd507e045e327026d15403_dc_rx.tbl \
+  --install-calibration --file calibrated.csv.gz --compress
+```
+
+The filename must contain the device serial and end in `_dc_rx.tbl`. On the
+next device open, libbladeRF selects the nearest correction entry when the
+receiver retunes. Tables are frequency-dependent and historically tied to the
+calibration/gain setup used to generate them; regenerate or replace them after
+changing hardware, firmware, or gain strategy. The installer refuses malformed
+files and refuses to overwrite an existing table unless the destination is
+managed explicitly.
+
 Hardware capture requires a Nuand Python binding and `libbladeRF` installation.
 Both the historical `bladeRF.Device` callback API and the current
 `bladerf.BladeRF` synchronous API are supported. The old vendored `pybladeRF`

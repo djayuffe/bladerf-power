@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0 — 2026-10-01
+
+- Added Nuand binary DC calibration-table validation, SHA-256 provenance, and
+  explicit per-user installation/use workflow.
+- Added `--calibration-file` and `--install-calibration` to capture and
+  diagnostics commands without misinterpreting DC tables as dB offsets.
+
 ## 0.7.2 — 2026-09-30
 
 - Added isolated USB rate/buffer-size matrix benchmarking with per-case
