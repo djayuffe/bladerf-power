@@ -36,6 +36,8 @@
 - Added a reusable `spectrum_math.py` DSP layer with amplitude/power/PSD
   metrics, ENBW correction, DC/IQ correction, calibration offsets, and clipping
   diagnostics.
+- Added Ruff lint coverage and corrected remaining parser, exception-boundary,
+  import-hygiene, and renderer dead-code findings.
 - Corrected SC16_Q11 overload detection to include the invalid positive endpoint
   (`+2048`) while retaining the valid negative endpoint (`-2048`).
 - Made FFT spacing follow the device read-back ADC sample rate and limited

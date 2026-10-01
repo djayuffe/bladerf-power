@@ -33,6 +33,7 @@ Options:
 """
 import sys
 import argparse
+import math
 SC16_Q11_FULL_SCALE = 2048.0
 try:
     from numpy import *
@@ -47,7 +48,7 @@ except ImportError:  # allow --help and --version without DSP dependencies
 def get_args():
     parser = argparse.ArgumentParser(description='Receive-only bladeRF spectrum survey')
     parser.add_argument('range', metavar='LOWER:UPPER:BIN_WIDTH')
-    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.8.0')
+    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.8.1')
     parser.add_argument('-f', '--file', default='output.csv')
     parser.add_argument('--raw-file', default=None,
                         help='optional raw little-endian SC16_Q11 output')
@@ -119,7 +120,7 @@ def isdigit(x):
     try:
         int(x)
         return True
-    except:
+    except (TypeError, ValueError):
         return False
 
 def suffix(x):
@@ -152,7 +153,10 @@ def floatish(x):
     if not isdigit(x[-1]):
         sfx = suffix(x[-1])
         x = x[:-1]
-    return float(x)*sfx
+    value = float(x) * sfx
+    if not math.isfinite(value):
+        raise ValueError("numeric value must be finite")
+    return value
 
 def intish(x):
     return int(floatish(x))
@@ -161,32 +165,32 @@ def int_or_attr(x):
     import bladeRF
     try:
         return int(x)
-    except:
+    except (TypeError, ValueError):
         return getattr(bladeRF, x)
 
 def timeish(x):
     # First off, if this is just an integer with no suffixes, then return it!
     try:
         return int(x)
-    except:
+    except (TypeError, ValueError):
         pass
 
     time_units = {'d':24*60*60, 'h':60*60, 'm':60, 's':1}
     if x[-1] in time_units:
         j = len(x) - 2
-        while isdigit(x[j-1]) and j > 0:
+        while j > 0 and isdigit(x[j-1]):
             j -= 1
         val = time_units[x[-1]] * intish(x[j:-1])
         if j > 0:
             return val + timeish(x[:j])
         else:
             return val
-    return 0
+    raise ValueError("invalid duration: %s" % x)
 
 ################################################################################
 ## DATA ANALYSIS
 ################################################################################
-import datetime, sys
+import datetime
 from multiprocessing import Process, Manager, Pool
 import queue
 
@@ -378,7 +382,7 @@ def rx_callback(device, stream, meta_data, samples, num_samples, user_data):
     in_data = fromstring(stream.current_as_buffer(), dtype=int16)
 
     # Are we supposed to quit?
-    if user_data['running'] == False:
+    if not user_data['running']:
         return None
 
     # A short callback can occur on stream shutdown or after a transport
@@ -474,7 +478,7 @@ def freq_planning(start_freq, end_freq, bin_width, fmbw2, min_tune_freq=0):
 ################################################################################
 
 def main():
-    from time import time, sleep, monotonic
+    from time import time, monotonic
     import threading
     from queue import Queue
     args = get_args()
@@ -490,6 +494,7 @@ def main():
         filter_margin = float(args['--filter-margin'])
         requested_bandwidth = intish(args['--bandwidth'])
         requested_sample_rate = intish(args['--sample-rate'])
+        exit_seconds = timeish(args['--exit-timer'])
     except (TypeError, ValueError, IndexError):
         sys.stderr.write("ERROR: bandwidth, sample rate, and filter margin must be numeric\n")
         return 2
@@ -498,6 +503,9 @@ def main():
         return 2
     if requested_bandwidth <= 0 or requested_sample_rate <= 0:
         sys.stderr.write("ERROR: bandwidth and sample rate must be positive\n")
+        return 2
+    if exit_seconds < 0:
+        sys.stderr.write("ERROR: exit timer cannot be negative\n")
         return 2
     if args['--settle-time'] < 0:
         sys.stderr.write("ERROR: settle time cannot be negative\n")
@@ -551,11 +559,11 @@ def main():
         else:
             from bladerf_backend import ModernDeviceAdapter
             device = ModernDeviceAdapter(bladeRF, args['--device'])
-    except:
+    except Exception as exc:
         if args['--device'] == '':
-            print("ERROR: No bladeRF devices available!")
+            print("ERROR: No bladeRF devices available: %s" % exc)
         else:
-            print("ERROR: Could not open bladeRF device %s" % args['--device'])
+            print("ERROR: Could not open bladeRF device %s: %s" % (args['--device'], exc))
         return 2
     try:
         device.rx.bandwidth = requested_bandwidth
@@ -631,10 +639,11 @@ def main():
         return 2
     try:
         scipy.signal.get_window(args['--window-type'], 8)
-    except ValueError as exc:
+    except ValueError:
         sys.stderr.write("ERROR: unknown FFT window %r\n" % args['--window-type'])
         return 2
-    window_func = lambda n: scipy.signal.get_window(args['--window-type'], n, fftbins=True)
+    def window_func(n):
+        return scipy.signal.get_window(args['--window-type'], n, fftbins=True)
     outfile = args['--file']
     compress = bool(args['--compress'])
     manager, pool, file_process, q_file = start_worker_pool(num_workers, outfile, compress)
@@ -647,7 +656,7 @@ def main():
     # Timing stuffage
     start_time = time()
     curr_time = start_time
-    exit_timer = timeish(args['--exit-timer'])
+    exit_timer = exit_seconds
 
     # This is the thread that runs the stream.  So exciting, la
     def run_stream(stream):
@@ -736,6 +745,9 @@ def main():
             sys.stderr.flush()
     except KeyboardInterrupt:
         pass
+    except RuntimeError as exc:
+        sys.stderr.write("ERROR: %s\n" % exc)
+        return 2
     finally:
         print() # Clear out the status_line stuffage
         rx_data['running'] = False

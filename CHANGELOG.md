@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.1 — 2026-10-01
+
+- Hardened numeric/duration parsing against non-finite and malformed values.
+- Corrected runtime-error handling in the capture loop and improved device-open
+  diagnostics.
+- Removed stale renderer imports/lambdas and added Ruff lint enforcement.
+
 ## 0.8.0 — 2026-10-01
 
 - Added Nuand binary DC calibration-table validation, SHA-256 provenance, and

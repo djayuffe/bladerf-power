@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bladerf-power"
-version = "0.8.0"
+version = "0.8.1"
 description = "Receive-only bladeRF spectrum survey and heatmap tools"
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.23", "scipy>=1.9", "Pillow>=9.0"]
@@ -16,3 +16,8 @@ bladerf-diagnostics = "bladerf_diagnostics:main"
 
 [tool.setuptools]
 py-modules = ["bladerf_power", "bladerf_backend", "bladerf_diagnostics", "calibration", "capture_io", "heatmap", "spectrum_math"]
+
+[tool.ruff.lint]
+# The capture CLI intentionally keeps a dependency-light NumPy compatibility
+# import; these legacy import-order/star-import warnings are documented here.
+ignore = ["E402", "F403", "F405"]

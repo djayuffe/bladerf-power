@@ -1,10 +1,14 @@
 #! /usr/bin/env python
 
 from PIL import Image, ImageDraw, ImageFont
-import os, sys, gzip, math, argparse, colorsys, datetime, csv
+import sys
+import gzip
+import math
+import argparse
+import colorsys
+import datetime
+import csv
 from pathlib import Path
-from collections import defaultdict
-from itertools import *
 
 vera_path = str(Path(__file__).resolve().with_name("Vera.ttf"))
 
@@ -156,7 +160,7 @@ def gzip_wrap(path):
     while running:
         try:
             line = next(iterator)
-            if type(line) == bytes:
+            if isinstance(line, bytes):
                 line = line.decode('utf-8')
             yield line
         except IOError:
@@ -205,9 +209,11 @@ def prepare_args():
     return args
 
 def open_raw_data(path):
-    raw_data = lambda: open(path)
+    def raw_data():
+        return open(path)
     if path.endswith('.gz'):
-        raw_data = lambda: gzip_wrap(path)
+        def raw_data():
+            return gzip_wrap(path)
     return raw_data
 
 def slice_columns(columns, low_freq, high_freq):
@@ -515,7 +521,8 @@ def tape_lines(draw, freqs, interval, y1, y2, used=None):
     low_f = (min_f // interval) * interval
     high_f = (1 + max_f // interval) * interval
     hits = 0
-    blur = lambda p: blend(p, (255, 255, 0), (0, 0, 0))
+    def blur(p):
+        return blend(p, (255, 255, 0), (0, 0, 0))
     for i in range(int(low_f), int(high_f), int(interval)):
         if not (min_f < i < max_f):
             continue
@@ -573,7 +580,6 @@ def create_labels(args, img):
     draw.rectangle([0,0,img.size[0],tape_height], fill='yellow')
     min_freq = min(args.freqs)
     max_freq = max(args.freqs)
-    delta = max_freq - min_freq
     width = len(args.freqs)
     height = len(args.times)
     label_base = 9
