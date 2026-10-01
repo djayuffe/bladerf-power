@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.2 — 2026-10-01
+
+- Hardened the project lint profile so CI enforces stable correctness checks
+  across Ruff releases without requiring unrelated legacy reformatting.
+- Removed an unreachable worker exception path and kept worker shutdown
+  deterministic for both plain and gzip output.
+
 ## 0.8.1 — 2026-10-01
 
 - Hardened numeric/duration parsing against non-finite and malformed values.

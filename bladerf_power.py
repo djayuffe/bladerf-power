@@ -48,7 +48,7 @@ except ImportError:  # allow --help and --version without DSP dependencies
 def get_args():
     parser = argparse.ArgumentParser(description='Receive-only bladeRF spectrum survey')
     parser.add_argument('range', metavar='LOWER:UPPER:BIN_WIDTH')
-    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.8.1')
+    parser.add_argument('-v', '--version', action='version', version='bladerf-power 0.8.2')
     parser.add_argument('-f', '--file', default='output.csv')
     parser.add_argument('--raw-file', default=None,
                         help='optional raw little-endian SC16_Q11 output')
@@ -220,10 +220,6 @@ def file_worker(q_file, outfile, compress):
                 pass
     except KeyboardInterrupt:
         pass
-    except RuntimeError as exc:
-        sys.stderr.write("ERROR: %s\n" % exc)
-        return 2
-
     # Closing GzipFile flushes its trailer even when stdout is the underlying
     # file object; GzipFile does not close stdout itself.
     f.close()
