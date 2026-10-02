@@ -12,6 +12,28 @@ from __future__ import annotations
 import threading
 
 
+def _binding_attr(module, name):
+    """Return a binding enum namespace from either public or native module API."""
+    value = getattr(module, name, None)
+    if value is not None:
+        return value
+    native = getattr(module, "_bladerf", None)
+    value = getattr(native, name, None) if native is not None else None
+    if value is None:
+        raise AttributeError("bladeRF binding does not expose %s" % name)
+    return value
+
+
+def _device_identifier(module, identifier):
+    """Map a serial string to a devstr when the modern binding exposes devices."""
+    if not identifier or not hasattr(module, "get_device_list"):
+        return identifier
+    for device in module.get_device_list():
+        if getattr(device, "serial_str", "") == identifier:
+            return getattr(device, "devstr", identifier)
+    return identifier
+
+
 class _ModernStream:
     def __init__(self, sdr, channel, module, callback, user_data, num_samples,
                  num_buffers, num_transfers):
@@ -25,8 +47,8 @@ class _ModernStream:
         self._stopped = threading.Event()
         self.error = None
         sdr.sync_config(
-            layout=module.ChannelLayout.RX_X1,
-            fmt=module.Format.SC16_Q11,
+            layout=_binding_attr(module, 'ChannelLayout').RX_X1,
+            fmt=_binding_attr(module, 'Format').SC16_Q11,
             num_buffers=int(num_buffers),
             buffer_size=self._num_samples,
             num_transfers=int(num_transfers),
@@ -87,7 +109,7 @@ class ModernDeviceAdapter:
     def __init__(self, module, identifier=''):
         self._module = module
         try:
-            self._sdr = module.BladeRF(identifier) if identifier else module.BladeRF()
+            self._sdr = module.BladeRF(_device_identifier(module, identifier)) if identifier else module.BladeRF()
         except TypeError:
             self._sdr = module.BladeRF()
         self.rx = _ModernRx(self, self._sdr.Channel(module.CHANNEL_RX(0)))
@@ -107,4 +129,3 @@ class ModernDeviceAdapter:
         # legacy LNA setting as a total manual RX gain when numeric.
         if isinstance(value, int):
             self.rx.set_manual_gain(value)
-

@@ -22,6 +22,28 @@ import numpy as np
 from spectrum_math import analyze_sc16, analyze_sc16_frames
 
 
+def _binding_attr(module, name):
+    """Return a binding enum namespace from either public or native module API."""
+    value = getattr(module, name, None)
+    if value is not None:
+        return value
+    native = getattr(module, "_bladerf", None)
+    value = getattr(native, name, None) if native is not None else None
+    if value is None:
+        raise AttributeError("bladeRF binding does not expose %s" % name)
+    return value
+
+
+def _device_identifier(module, identifier):
+    """Map a serial string to a devstr when the modern binding exposes devices."""
+    if not identifier or not hasattr(module, "get_device_list"):
+        return identifier
+    for device in module.get_device_list():
+        if getattr(device, "serial_str", "") == identifier:
+            return getattr(device, "devstr", identifier)
+    return identifier
+
+
 @dataclass
 class BenchmarkRow:
     fft_size: int
@@ -208,7 +230,7 @@ def usb_throughput_test(identifier: str = "", duration: float = 2.0,
             return {"status": "unsupported",
                     "error": "USB benchmark requires the synchronous bladerf.BladeRF API"}
         try:
-            device = module.BladeRF(identifier) if identifier else module.BladeRF()
+            device = module.BladeRF(_device_identifier(module, identifier)) if identifier else module.BladeRF()
         except TypeError:
             device = module.BladeRF()
         channel = device.Channel(module.CHANNEL_RX(0))
@@ -219,8 +241,8 @@ def usb_throughput_test(identifier: str = "", duration: float = 2.0,
             channel.gain_mode = module.GainMode.Manual
         if hasattr(channel, "gain"):
             channel.gain = 0
-        device.sync_config(layout=module.ChannelLayout.RX_X1,
-                           fmt=module.Format.SC16_Q11,
+        device.sync_config(layout=_binding_attr(module, 'ChannelLayout').RX_X1,
+                           fmt=_binding_attr(module, 'Format').SC16_Q11,
                            num_buffers=16, buffer_size=int(buffer_size),
                            num_transfers=8, stream_timeout=3500)
         channel.enable = True

@@ -26,11 +26,12 @@ Options:
   -w --rx-vga2=<g>         Set vga2 gain [default: RXVGA2_GAIN_MIN]
   -d --device=<d>          Device identifier [default: ]
   -n --num-buffers=<nb>    Number of transfer buffers [default: 16].
-  -t --num-transfers=<nt>  Number of transfers [default: 16].
+  -t --num-transfers=<nt>  Number of transfers [default: 8].
   -l --num-samples=<ns>    Numper of samples per transfer buffer [default: 8192].
   -P --num-workers=<p>     Set number of FFT workers [default: 2]
   --dry-run                Validate the sweep and print its plan without opening hardware.
 """
+import builtins
 import sys
 import argparse
 import math
@@ -68,7 +69,7 @@ def get_args():
     parser.add_argument('-w', '--rx-vga2', default='RXVGA2_GAIN_MIN')
     parser.add_argument('-d', '--device', default='')
     parser.add_argument('-n', '--num-buffers', default='16')
-    parser.add_argument('-t', '--num-transfers', default='16')
+    parser.add_argument('-t', '--num-transfers', default='8')
     parser.add_argument('-l', '--num-samples', default='8192')
     parser.add_argument('-P', '--num-workers', default='2')
     parser.add_argument('--sample-rate', default=None,
@@ -144,7 +145,7 @@ def suffixed(x):
     if x == 0:
         return '0'
     tricade = int(log10(abs(x)))//3
-    tricade = max(0, min(tricade, 6))
+    tricade = builtins.max(0, builtins.min(tricade, 6))
     mapping = {0: '', 1:'K', 2:'M', 3:'G', 4:'T', 5:'P', 6:'E'}
     return "%.1f%s"%(x/(1000**tricade), mapping[tricade])
 
@@ -162,11 +163,24 @@ def intish(x):
     return int(floatish(x))
 
 def int_or_attr(x):
-    import bladeRF
     try:
         return int(x)
     except (TypeError, ValueError):
-        return getattr(bladeRF, x)
+        pass
+
+    try:
+        import bladeRF as module
+    except ImportError:
+        import bladerf as module
+
+    if hasattr(module, x):
+        return getattr(module, x)
+
+    native = getattr(module, "_bladerf", None)
+    if native is not None and hasattr(native, x):
+        return getattr(native, x)
+
+    raise ValueError("Unknown bladeRF numeric value or constant: %r" % (x,))
 
 def timeish(x):
     # First off, if this is just an integer with no suffixes, then return it!
@@ -227,7 +241,7 @@ def file_worker(q_file, outfile, compress):
 
 def start_worker_pool(num_workers, outfile, compress):
     manager = Manager()
-    pool = Pool(processes=max(1, num_workers))
+    pool = Pool(processes=builtins.max(1, num_workers))
     q_file = manager.Queue()
     file_process = Process(target=file_worker, args=(q_file, outfile, compress))
     file_process.start()
@@ -271,7 +285,7 @@ def fft_dbfs(data, window_func, full_scale=SC16_Q11_FULL_SCALE):
     magnitude = maximum(abs(spectrum), 1e-15)
     return 20 * log10(magnitude)
 
-def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwidth, bin_width, start_freq, end_freq, timestamp, metric='amplitude', full_scale=2048.0, dc_notch=True, iq_gain=1.0, iq_phase_deg=0.0, calibration_db=0.0, sample_rate_hz=None, estimator='mean'):
+def analyze_view(data, window_type, lower_sideband, center_freq, analysis_bandwidth, bin_width, start_freq, end_freq, timestamp, metric='amplitude', full_scale=2048.0, dc_notch=True, iq_gain=1.0, iq_phase_deg=0.0, calibration_db=0.0, sample_rate_hz=None, estimator='mean'):
     """
     Perform power spectral analysis on data of length fft_len, passing it off to
     be written to file afterward.
@@ -281,8 +295,8 @@ def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwi
     data : array (real/complex interleaved)
         Incoming SC16 interleaved data samples of length fft_len
 
-    window_func : function
-        FFT windowing function, such as scipy.signal.hann()
+    window_type : str
+        SciPy FFT window name, such as 'blackman' or 'hann'.
 
     lower_sideband : bool
         Whether the lower or upper sideband of this view should be analyzed
@@ -308,12 +322,13 @@ def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwi
     """
     from spectrum_math import analyze_sc16, analyze_sc16_frames
     import numpy as np
+    import scipy.signal
     array = np.asarray(data)
     sample_count = array.shape[-1] // 2
     sample_rate = float(sample_rate_hz) if sample_rate_hz is not None else bin_width * sample_count
     if sample_rate <= 0:
         raise ValueError("sample rate must be positive")
-    window = window_func(sample_count)
+    window = scipy.signal.get_window(window_type, sample_count)
     if array.ndim == 2:
         result = analyze_sc16_frames(array, sample_rate, center_freq, window,
                                      metric, full_scale, dc_notch, iq_gain,
@@ -326,13 +341,13 @@ def analyze_view(data, window_func, lower_sideband, center_freq, analysis_bandwi
     # Find start/end frequencies that we get from this FFT, and which bins we
     # want to slice out of the DATA array
     if lower_sideband:
-        view_start = max(center_freq - analysis_bandwidth, start_freq)
-        view_end = min(center_freq - bin_width, end_freq)
+        view_start = builtins.max(center_freq - analysis_bandwidth, start_freq)
+        view_end = builtins.min(center_freq - bin_width, end_freq)
 
         selected = (result.frequencies_hz >= view_start) & (result.frequencies_hz <= view_end)
     else:
-        view_start = max(center_freq + bin_width, start_freq)
-        view_end = min(center_freq + analysis_bandwidth, end_freq)
+        view_start = builtins.max(center_freq + bin_width, start_freq)
+        view_end = builtins.min(center_freq + analysis_bandwidth, end_freq)
 
         selected = (result.frequencies_hz >= view_start) & (result.frequencies_hz <= view_end)
 
@@ -352,7 +367,7 @@ def retune_and_settle(device, frequency, settle_time):
     import time
     started = time.monotonic()
     device.rx.frequency = frequency
-    deadline = started + min(settle_time, 0.25)
+    deadline = started + builtins.min(settle_time, 0.25)
     while time.monotonic() < deadline:
         try:
             if abs(float(device.rx.frequency) - frequency) <= 1.0:
@@ -375,7 +390,7 @@ def rx_callback(device, stream, meta_data, samples, num_samples, user_data):
     data_idx = user_data['data_idx']
     fft_len = user_data['fft_len']
     q_data = user_data['q_data']
-    in_data = fromstring(stream.current_as_buffer(), dtype=int16)
+    in_data = frombuffer(stream.current_as_buffer(), dtype=int16)
 
     # Are we supposed to quit?
     if not user_data['running']:
@@ -580,8 +595,8 @@ def main():
     # let the device setter reject values outside its true range.
     frequency_min = float(getattr(bladeRF, 'FREQUENCY_MIN', 0))
     frequency_max = float(getattr(bladeRF, 'FREQUENCY_MAX', float('inf')))
-    start_freq = max(start_freq, frequency_min)
-    end_freq = min(end_freq, frequency_max)
+    start_freq = builtins.max(start_freq, frequency_min)
+    end_freq = builtins.min(end_freq, frequency_max)
 
     if end_freq <= start_freq:
         sys.stderr.write("ERROR: end frequency must be greater than start frequency!\n")
@@ -589,7 +604,7 @@ def main():
 
     # The ADC sample rate, not the analog filter bandwidth, determines FFT
     # frequency spacing. The useful view is limited by whichever is narrower.
-    analysis_span = min(float(bandwidth), float(sample_rate))
+    analysis_span = builtins.min(float(bandwidth), float(sample_rate))
 
     # fft_len is the minimum length FFT that guarantees us bins of less than or
     # equal width as requested through bin_width:
@@ -601,7 +616,7 @@ def main():
 
     # fmbw2 is the amount of spectrum we get with each view, we quantize to our
     # effective bin_width given our bandwidth and number of bins
-    fmbw2 = max(bin_width, round(filter_margin*(analysis_span/2)/bin_width)*bin_width)
+    fmbw2 = builtins.max(bin_width, round(filter_margin*(analysis_span/2)/bin_width)*bin_width)
 
     freqs = freq_planning(start_freq, end_freq, bin_width, fmbw2, frequency_min)
     num_views = len(freqs)
@@ -638,8 +653,6 @@ def main():
     except ValueError:
         sys.stderr.write("ERROR: unknown FFT window %r\n" % args['--window-type'])
         return 2
-    def window_func(n):
-        return scipy.signal.get_window(args['--window-type'], n, fftbins=True)
     outfile = args['--file']
     compress = bool(args['--compress'])
     manager, pool, file_process, q_file = start_worker_pool(num_workers, outfile, compress)
@@ -711,7 +724,7 @@ def main():
             analysis_data = frame_batch[0] if len(frame_batch) == 1 else array(frame_batch)
             if raw_writer is not None:
                 raw_writer.write_frames(analysis_data, device.rx.frequency)
-            analysis_args = (analysis_data, window_func, freqs[freq_idx][1], device.rx.frequency, fmbw2, bin_width, start_freq, end_freq, curr_time, args['--metric'], args['--full-scale'], not args['--no-dc-notch'], args['--iq-gain'], args['--iq-phase'], args['--calibration-db'], sample_rate, args['--estimator'])
+            analysis_args = (analysis_data, args['--window-type'], freqs[freq_idx][1], device.rx.frequency, fmbw2, bin_width, start_freq, end_freq, curr_time, args['--metric'], args['--full-scale'], not args['--no-dc-notch'], args['--iq-gain'], args['--iq-phase'], args['--calibration-db'], sample_rate, args['--estimator'])
             pending.append(pool.apply_async(analyze_view, analysis_args))
             if len(pending) >= num_workers:
                 q_file.put(pending.pop(0).get())
@@ -732,7 +745,7 @@ def main():
             status_line = "[" + " "*num_space + "." + " "*(total_space - num_space - 1) + "]"
 
             if exit_timer > 0:
-                pct_done = "%.1f%%"%(min(100*(tct - start_time)/exit_timer, 100))
+                pct_done = "%.1f%%"%(builtins.min(100*(tct - start_time)/exit_timer, 100))
             else:
                 pct_done = u"\u221e"
 
