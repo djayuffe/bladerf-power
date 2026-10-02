@@ -33,6 +33,11 @@ class ParserTests(unittest.TestCase):
         plan = module.freq_planning(0, 1_000, 10, 200, 0)
         self.assertGreaterEqual(len(plan), 1)
 
+    def test_fallback_total_gain_combines_numeric_stages(self):
+        self.assertEqual(module.fallback_total_gain("6", "20", "30"), 56)
+        self.assertEqual(module.fallback_total_gain("LNA_GAIN_MAX", "RXVGA1_GAIN_MIN", "30"), 30)
+        self.assertEqual(module.fallback_total_gain("30", "30", "30"), 60)
+
     def test_fft_normalization(self):
         try:
             import numpy as np

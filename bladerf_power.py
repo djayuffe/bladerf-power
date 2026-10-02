@@ -182,6 +182,22 @@ def int_or_attr(x):
 
     raise ValueError("Unknown bladeRF numeric value or constant: %r" % (x,))
 
+def numeric_gain_values(*values):
+    gains = []
+    for value in values:
+        try:
+            gains.append(intish(value))
+        except (TypeError, ValueError, IndexError):
+            pass
+    return gains
+
+def fallback_total_gain(lna_gain, rx_vga1, rx_vga2):
+    """Approximate bladeRF1 staged gain on bindings with one manual gain knob."""
+    gains = numeric_gain_values(lna_gain, rx_vga1, rx_vga2)
+    if not gains:
+        return 0
+    return builtins.max(0, builtins.min(sum(gains), 60))
+
 def timeish(x):
     # First off, if this is just an integer with no suffixes, then return it!
     try:
@@ -627,12 +643,9 @@ def main():
         device.rx.vga2 = int_or_attr(args['--rx-vga2'])
     except (AttributeError, TypeError, ValueError):
         # Newer bindings expose one calibrated total-gain control rather than
-        # the bladeRF1 LNA/VGA stage fields. Preserve explicit numeric gain;
-        # symbolic legacy defaults fall back to the device's safe zero dB.
-        try:
-            gain = intish(args['--rx-vga2'])
-        except (TypeError, ValueError, IndexError):
-            gain = 0
+        # the bladeRF1 LNA/VGA stage fields. Combine explicit numeric stage
+        # requests, while symbolic legacy defaults fall back to safe zero dB.
+        gain = fallback_total_gain(args['--lna-gain'], args['--rx-vga1'], args['--rx-vga2'])
         if hasattr(device.rx, 'set_manual_gain'):
             device.rx.set_manual_gain(gain)
 
