@@ -1,4 +1,6 @@
 import importlib.util
+import gzip
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -34,3 +36,11 @@ class HeatmapTests(unittest.TestCase):
         self.assertEqual(len(palette), 256)
         self.assertTrue(all(len(rgb) == 3 and all(0 <= c <= 255 for c in rgb)
                             for rgb in palette))
+
+    def test_gzip_wrap_ends_cleanly_on_eof(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "capture.csv.gz"
+            with gzip.open(path, "wb") as handle:
+                handle.write(b"one\n")
+                handle.write(b"two\n")
+            self.assertEqual(list(self.module.gzip_wrap(str(path))), ["one\n", "two\n"])

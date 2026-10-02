@@ -155,16 +155,17 @@ def palette_parse(s):
 
 def gzip_wrap(path):
     "hides silly CRC errors"
-    iterator = gzip.open(path, 'rb')
-    running = True
-    while running:
-        try:
-            line = next(iterator)
+    with gzip.open(path, 'rb') as iterator:
+        while True:
+            try:
+                line = next(iterator)
+            except StopIteration:
+                return
+            except IOError:
+                return
             if isinstance(line, bytes):
                 line = line.decode('utf-8')
             yield line
-        except IOError:
-            running = False
 
 def time_compression(y, decay):
     return int(round((1/decay)*math.exp(y*decay) - 1/decay))
