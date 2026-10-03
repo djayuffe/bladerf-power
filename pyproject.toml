@@ -12,10 +12,11 @@ dependencies = ["numpy>=1.23", "scipy>=1.9", "Pillow>=9.0"]
 [project.scripts]
 bladerf-power = "bladerf_power:main"
 bladerf-heatmap = "heatmap:main"
+bladerf-heatmap-fast = "heatmap_fast:main"
 bladerf-diagnostics = "bladerf_diagnostics:main"
 
 [tool.setuptools]
-py-modules = ["bladerf_power", "bladerf_backend", "bladerf_diagnostics", "calibration", "capture_io", "heatmap", "spectrum_math"]
+py-modules = ["bladerf_power", "bladerf_backend", "bladerf_diagnostics", "calibration", "capture_io", "heatmap", "heatmap_fast", "spectrum_math"]
 
 [tool.ruff.lint]
 # Keep CI focused on correctness diagnostics.  The renderer and capture CLI

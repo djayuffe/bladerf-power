@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Corrected PSD normalization to divide by equivalent noise bandwidth in Hz
+  (`ENBW_bins * sample_rate / FFT_N`) instead of `sample_rate * ENBW_bins`.
+- Added regression coverage that catches the previous ~32 dB PSD error for a
+  1600-point/40 MS/s capture geometry.
+- Hardened full-band-per-LO scanning with robust retune retry/readback,
+  complete SC16 frame indexing, stream-thread error surfacing, and lossless
+  gzip writer shutdown.
+- Expanded `heatmap_fast.py` with sweep reconstruction by frequency wrap,
+  explicit coverage checks, peak/mean/median RF reduction, peak/mean/median/
+  percentile time reduction, optional non-interpolated quantitative output,
+  overlap mean/peak modes, and ruler/metadata overlays.
+
 ## 0.8.2 — 2026-10-01
 
 - Hardened the project lint profile so CI enforces stable correctness checks

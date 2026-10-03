@@ -45,6 +45,23 @@
 - Added validation before `--dry-run`, strict numeric suffix handling, short
   callback rejection, guaranteed gzip trailer flushing, and RX disable/close
   cleanup.
+- Added current Nuand `bladerf.BladeRF` compatibility through a synchronous RX
+  adapter, including serial-to-`devstr` resolution, public/private enum lookup,
+  and `current_as_buffer()` conversion to SC16_Q11 `int16` samples.
+- Eliminated the historical half-spectrum waste: each LO now contributes the
+  complete trusted interval around the center frequency instead of retaining
+  only one sideband. The exact LO/DC coordinate is retained so CSV rows remain
+  geometrically contiguous; DC suppression changes values, not bin positions.
+- Added bounded retune retry with readback validation and exponential backoff,
+  so transient USB/NIOS control failures do not automatically destroy long
+  surveys.
+- Corrected PSD math to use equivalent noise bandwidth in Hz:
+  `ENBW_bins * sample_rate / FFT_N`. The previous `sample_rate * ENBW_bins`
+  denominator understated PSD by roughly `10*log10(FFT_N)`.
+- Added `heatmap_fast.py` support for frequency-wrap sweep reconstruction,
+  minimum coverage checks, explicit peak/mean/median/percentile reducer modes,
+  optional no-interpolation output for quantitative plots, overlap averaging in
+  linear power, and ruler/metadata overlays.
 
 ## Remaining hardware boundary
 

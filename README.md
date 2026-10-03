@@ -154,6 +154,26 @@ python3 heatmap.py 433mhz.csv.gz 433mhz.png \
   --low 433M --high 435M --db -130 -20 --palette extended
 ```
 
+For wide captures or publication-quality artifacts, use the fast sweep-aware
+renderer. Its default mode is discovery-oriented: it keeps peak RF bins, fills
+visual holes, and adds rulers/metadata so narrow carriers remain visible:
+
+```sh
+python3 heatmap_fast.py 433mhz.csv.gz 433mhz-fast.png \
+  --low 433M --high 435M --width 3840 --height 1080 \
+  --min-coverage 0.98 --db -130 -20
+```
+
+For more quantitative output, disable interpolation and combine overlap/time
+data in linear power:
+
+```sh
+python3 heatmap_fast.py 433mhz.csv.gz 433mhz-mean.png \
+  --low 433M --high 435M --width 3840 --height 1080 \
+  --min-coverage 0.98 --frequency-reducer mean \
+  --time-reducer mean --overlap-mode mean --no-fill-holes
+```
+
 ## Validation, benchmark, and auto-configuration advisor
 
 Run the diagnostic tool before a deployment or after changing firmware,
@@ -217,6 +237,10 @@ The positional range is `LOWER:UPPER:BIN_WIDTH`; suffixes `k`, `M`, `G`, `T`,
 | `--num-workers` | Parallel FFT workers; CSV writing remains ordered. |
 | `--raw-file` / `--sigmf-prefix` | Optional raw `ci16_le` or SigMF capture beside CSV. |
 
+`--metric psd` reports dBFS/Hz using the analysis window’s equivalent noise
+bandwidth in Hz: `ENBW_bins * sample_rate / FFT_N`. This keeps PSD values
+consistent when FFT length or sample rate changes.
+
 Run `python3 bladerf_power.py --help` for the complete option list.
 
 ## Changes in the audited port
@@ -244,10 +268,17 @@ Run `python3 bladerf_power.py --help` for the complete option list.
 
 Each CSV row contains timestamp, lower frequency, upper frequency, bin width,
 sample count, and dB values. Files may be plain UTF-8 CSV or gzip-compressed
-CSV. The heatmap reader accepts both forms, supports frequency/time cropping,
-DB range control, palettes, time compression, fractional timestamps, and
-timestamp tick marks. It performs two passes, so automatic DB limits reflect
-the selected crop rather than the entire capture.
+CSV. The classic heatmap reader accepts both forms, supports frequency/time
+cropping, DB range control, palettes, time compression, fractional timestamps,
+and timestamp tick marks. It performs two passes, so automatic DB limits
+reflect the selected crop rather than the entire capture.
+
+`heatmap_fast.py` reconstructs complete sweeps by detecting frequency wraps,
+checks minimum RF coverage, and can render both discovery and quantitative
+views. Discovery mode uses peak-preserving frequency/time reduction so narrow
+signals survive downsampling. Quantitative mode should use `--frequency-reducer
+mean`, `--time-reducer mean`, `--overlap-mode mean`, and `--no-fill-holes` so
+missing measurements remain visible instead of being interpolated.
 
 Malformed rows, empty crops, invalid suffixes, and non-positive frequency steps
 fail with actionable errors. The bundled font is resolved relative to the
@@ -269,6 +300,8 @@ sample rate.
 - `bladerf_diagnostics.py` — self-test, clipping sweep, benchmark matrix, and
   configuration advisor.
 - `heatmap.py` — two-pass CSV reader and PIL renderer.
+- `heatmap_fast.py` — wideband sweep reconstructor with coverage checks,
+  reducer modes, optional interpolation, and ruler/metadata overlays.
 - `tests/` — hardware-free parser and CLI regression tests.
 - `Vera.ttf` — bundled renderer font; no network access is needed at runtime.
 - `ARCHITECTURE.md` — design, tuning, concurrency, and extension notes.

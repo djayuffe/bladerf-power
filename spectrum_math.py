@@ -82,7 +82,8 @@ def analyze_sc16(raw: np.ndarray, sample_rate: float, center_frequency: float,
     elif metric == "power":
         db = 10.0 * np.log10(np.maximum(magnitude * magnitude, 1e-30))
     elif metric == "psd":
-        db = 10.0 * np.log10(np.maximum(magnitude * magnitude / (sample_rate * enbw), 1e-30))
+        enbw_hz = enbw * (float(sample_rate) / float(samples.size))
+        db = 10.0 * np.log10(np.maximum(magnitude * magnitude / enbw_hz, 1e-30))
     else:
         raise ValueError("metric must be amplitude, power, or psd")
     db = db + float(calibration_db)
@@ -150,7 +151,8 @@ def analyze_sc16_frames(frames: np.ndarray, sample_rate: float, center_frequency
     elif metric in ("power", "psd"):
         if metric == "psd":
             _, enbw = window_metrics(np.asarray(window))
-            power = power / (sample_rate * enbw)
+            enbw_hz = enbw * (float(sample_rate) / float(results[0].frequencies_hz.size))
+            power = power / enbw_hz
         db = 10.0 * np.log10(np.maximum(power, 1e-30))
     else:
         raise ValueError("metric must be amplitude, power, or psd")

@@ -38,6 +38,19 @@ class SpectrumMathTests(unittest.TestCase):
         result = self.analyze_sc16(raw, n, 0, window, metric='psd', dc_notch=False)
         self.assertTrue(self.np.all(self.np.isfinite(result.values_db)))
 
+    def test_psd_uses_enbw_hz_not_sample_rate_times_bins(self):
+        n = 128
+        window = self.np.ones(n)
+        raw = self.np.zeros(n * 2, dtype=self.np.int16)
+        raw[::2] = 2048
+        result = self.analyze_sc16(raw, n, 0, window, metric='psd', dc_notch=False)
+        self.assertAlmostEqual(float(result.peak_db), 0.0, places=5)
+
+        frames = self.np.vstack([raw, raw, raw])
+        averaged = self.analyze_sc16_frames(frames, n, 0, window, metric='psd',
+                                            dc_notch=False)
+        self.assertAlmostEqual(float(averaged.peak_db), 0.0, places=5)
+
     def test_frame_average_preserves_tone_and_reports_all_clips(self):
         n = 128
         window = self.np.ones(n)
