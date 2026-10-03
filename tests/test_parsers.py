@@ -27,7 +27,10 @@ class ParserTests(unittest.TestCase):
     def test_frequency_plan_is_contiguous(self):
         plan = module.freq_planning(100, 1_000, 10, 200)
         self.assertGreaterEqual(len(plan), 1)
-        self.assertEqual(plan[0][0], 90)
+        self.assertTrue(all(isinstance(freq, (int, float)) for freq in plan))
+        self.assertLessEqual(plan[0] - 200, 100)
+        self.assertGreaterEqual(plan[-1] + 200, 1_000)
+        self.assertTrue(all((b - a) <= 400 for a, b in zip(plan, plan[1:])))
 
     def test_frequency_plan_allows_device_lower_edge(self):
         plan = module.freq_planning(0, 1_000, 10, 200, 0)

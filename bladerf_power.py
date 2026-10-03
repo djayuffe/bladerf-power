@@ -32,6 +32,7 @@ Options:
   --dry-run                Validate the sweep and print its plan without opening hardware.
 """
 import builtins
+import time
 import sys
 import argparse
 import math
@@ -264,17 +265,37 @@ def start_worker_pool(num_workers, outfile, compress):
     return manager, pool, file_process, q_file
 
 def stop_worker_pool(manager, pool, file_process, q_file):
+    """Drain FFT workers and file queue without truncating output.
+
+    Ordering is intentional:
+      1. stop accepting worker jobs
+      2. wait for every FFT worker
+      3. enqueue the writer sentinel after all output records
+      4. wait for the writer to consume every preceding record
+      5. let the writer close/finish the gzip stream
+      6. only then shut down the multiprocessing manager
+
+    Never terminate a live gzip writer during normal shutdown: doing so loses
+    queued records and leaves the gzip end-of-stream trailer unwritten.
+    """
     print("Closing worker pool...")
     pool.close()
 
     print("Joining worker pool...")
     pool.join()
 
-    print("Joining file process...")
+    print("Draining file queue and closing output...")
     q_file.put("I'm sorry dave, it's time to die")
-    file_process.join(timeout=10)
-    if file_process.is_alive():
-        file_process.terminate()
+
+    while file_process.is_alive():
+        file_process.join(timeout=1.0)
+
+    if file_process.exitcode not in (0, None):
+        raise RuntimeError(
+            "file writer exited abnormally with status %s" %
+            file_process.exitcode
+        )
+
     manager.shutdown()
 
 def db(x):
@@ -315,7 +336,7 @@ def analyze_view(data, window_type, lower_sideband, center_freq, analysis_bandwi
         SciPy FFT window name, such as 'blackman' or 'hann'.
 
     lower_sideband : bool
-        Whether the lower or upper sideband of this view should be analyzed
+        Deprecated compatibility argument. Both trusted sidebands are analyzed.
 
     center_freq : float (Hz)
         Center frequency of this view
@@ -354,18 +375,20 @@ def analyze_view(data, window_type, lower_sideband, center_freq, analysis_bandwi
                               full_scale, dc_notch, iq_gain, iq_phase_deg,
                               calibration_db)
 
-    # Find start/end frequencies that we get from this FFT, and which bins we
-    # want to slice out of the DATA array
-    if lower_sideband:
-        view_start = builtins.max(center_freq - analysis_bandwidth, start_freq)
-        view_end = builtins.min(center_freq - bin_width, end_freq)
+    # Use the complete trusted FFT interval around the LO.  The previous
+    # implementation retained only one sideband, wasting approximately half
+    # of every capture and doubling the number of required retunes.
+    view_start = builtins.max(center_freq - analysis_bandwidth, start_freq)
+    view_end = builtins.min(center_freq + analysis_bandwidth, end_freq)
 
-        selected = (result.frequencies_hz >= view_start) & (result.frequencies_hz <= view_end)
-    else:
-        view_start = builtins.max(center_freq + bin_width, start_freq)
-        view_end = builtins.min(center_freq + analysis_bandwidth, end_freq)
-
-        selected = (result.frequencies_hz >= view_start) & (result.frequencies_hz <= view_end)
+    # Exclude the exact LO/DC bin.  DC removal suppresses it already, but
+    # excluding it avoids introducing an artificial narrow notch into stitched
+    # survey data.
+    selected = (
+        (result.frequencies_hz >= view_start) &
+        (result.frequencies_hz <= view_end) &
+        (abs(result.frequencies_hz - center_freq) >= bin_width * 0.5)
+    )
 
     values = result.values_db[selected]
 
@@ -378,29 +401,67 @@ def analyze_view(data, window_type, lower_sideband, center_freq, analysis_bandwi
     return csv_str
 
 
-def retune_and_settle(device, frequency, settle_time):
-    """Set RX frequency, verify readback when available, then settle."""
-    import time
-    started = time.monotonic()
-    device.rx.frequency = frequency
-    deadline = started + builtins.min(settle_time, 0.25)
-    while time.monotonic() < deadline:
+def retune_and_settle(device, frequency, settle_time, retries=5):
+    """Tune RX robustly while streaming.
+
+    bladeRF1 tuning uses NIOS control transfers which can occasionally collide
+    with sustained high-rate USB streaming.  Retry transient I/O failures with
+    bounded exponential backoff and verify the resulting frequency readback.
+    """
+    target = int(round(float(frequency)))
+    last_error = None
+
+    for attempt in range(retries):
         try:
-            if abs(float(device.rx.frequency) - frequency) <= 1.0:
+            device.rx.frequency = target
+
+            actual = int(device.rx.frequency)
+
+            if abs(actual - target) > 100000:
+                raise RuntimeError(
+                    "frequency readback mismatch: requested %d Hz, got %d Hz"
+                    % (target, actual)
+                )
+
+            if settle_time > 0:
+                time.sleep(float(settle_time))
+
+            if attempt:
+                print(
+                    "Retune recovered after %d retries: %.6f MHz -> %.6f MHz"
+                    % (attempt, target / 1e6, actual / 1e6),
+                    file=sys.stderr,
+                )
+
+            return actual
+
+        except Exception as exc:
+            last_error = exc
+
+            if attempt + 1 >= retries:
                 break
-        except (AttributeError, TypeError, ValueError):
-            break
-        time.sleep(0.001)
-    remaining = settle_time - (time.monotonic() - started)
-    if remaining > 0:
-        time.sleep(remaining)
 
+            delay = builtins.min(0.100, 0.005 * (2 ** attempt))
 
-################################################################################
-## RX CALLBACK
-################################################################################
+            print(
+                "WARNING: retune %.6f MHz failed (%s); retry %d/%d in %.1f ms"
+                % (
+                    target / 1e6,
+                    exc,
+                    attempt + 1,
+                    retries - 1,
+                    delay * 1000.0,
+                ),
+                file=sys.stderr,
+            )
 
-# The receiver callback, which fills up queued_data, and sends it on its merry way
+            time.sleep(delay)
+
+    raise RuntimeError(
+        "bladeRF retune to %.6f MHz failed after %d attempts: %s"
+        % (target / 1e6, retries, last_error)
+    ) from last_error
+
 def rx_callback(device, stream, meta_data, samples, num_samples, user_data):
     data = user_data['data']
     data_idx = user_data['data_idx']
@@ -426,19 +487,23 @@ def rx_callback(device, stream, meta_data, samples, num_samples, user_data):
         user_data['data_idx'] = 0
         return stream.next()
 
-    # Are we full already?  Then let's just keep on keeping on
-    if data_idx == fft_len:
+    # data_idx is measured in int16 values, while fft_len is measured in
+    # complex samples.  One complex SC16_Q11 sample occupies two int16 values.
+    frame_values = fft_len * 2
+
+    # A complete frame remains owned by the consumer until it resets data_idx.
+    if data_idx >= frame_values:
         return stream.current()
 
-    if num_samples*2 + data_idx < fft_len*2:
+    if num_samples * 2 + data_idx < frame_values:
         # Are we only partially filled?  Then fill in and return
         data[data_idx:num_samples*2 + data_idx] = in_data
         user_data['data_idx'] += num_samples*2
         return stream.next()
     else:
         # Have we filled completely?  Then take what we need from this buffer, and discard the rest
-        data[data_idx:] = in_data[0:(fft_len*2 - data_idx)]
-        user_data['data_idx'] = fft_len
+        data[data_idx:] = in_data[0:(frame_values - data_idx)]
+        user_data['data_idx'] = frame_values
         if user_data.get('discard_frames', 0):
             user_data['discard_frames'] -= 1
             user_data['data_idx'] = 0
@@ -447,56 +512,63 @@ def rx_callback(device, stream, meta_data, samples, num_samples, user_data):
         return stream.next()
 
 
-def freq_planning(start_freq, end_freq, bin_width, fmbw2, min_tune_freq=0):
+def freq_planning(start_freq, end_freq, bin_width, fmbw2, min_tune_freq=0,
+                  max_tune_freq=float('inf')):
+    """Plan contiguous full-band LO tunings.
+
+    ``fmbw2`` is the trusted half-width around each LO centre.  Each tuning
+    therefore contributes approximately ``2*fmbw2`` of useful RF spectrum.
+
+    Centres are spaced by the full trusted width.  The first and last centres
+    are constrained to the hardware tuning range while still covering the
+    requested RF interval whenever physically possible.
     """
-    Given frequency parameters, returns a list of (center_frequency,
-    lower_sideband) tuples, denoting the center frequency of each tuning view,
-    and whether we should pay attention to the lower sideband or upper sideband
-    when tuning to a particular frequency.
-
-    Parameters
-    ----------
-    start_freq : float (Hz)
-        Beginning of desired frequency range
-
-    end_freq : float (Hz)
-        End of desired frequency range, must be greater than start_freq
-
-    bin_width : float (Hz)
-        Width of analysis FFT bins
-
-    analysis_bandwidth : float (Hz)
-        Width of analysis window in Hz, equal to filter_margin * bandwidth/2
-
-    Returns
-    -------
-    freqs : list of (center_frequency, lower_sideband) tuples
-        A list of views describing a center frequency to tune to and which
-        sideband to observe, upper or lower (true signifies lower sideband).
-    """
-    from math import ceil
-    if not (end_freq > start_freq >= min_tune_freq and bin_width > 0 and fmbw2 > 0):
+    if not (end_freq > start_freq >= min_tune_freq and
+            bin_width > 0 and fmbw2 > 0):
         raise ValueError("invalid frequency plan parameters")
-    # First frequency is always the same; either just below start_freq or at
-    # start_freq + bandwidth/2 - binwidth, in the case that start_freq is really
-    # close to the minimum frequency we can tune to:
-    if start_freq - bin_width >= min_tune_freq:
-        # Put center_freq just below start_freq if we are not at the minimum frequency
-        freqs = [(start_freq - bin_width, False)]
+
+    trusted_width = 2.0 * fmbw2
+    span = end_freq - start_freq
+
+    # Minimum number of complete trusted windows required.
+    num_views = builtins.max(1, int(math.ceil(span / trusted_width)))
+
+    # Distribute centres evenly over the requested range.  This avoids a
+    # pathological tiny final view and gives small, uniform overlap when the
+    # span is not an exact multiple of trusted_width.
+    if num_views == 1:
+        centres = [(start_freq + end_freq) * 0.5]
     else:
-        # Otherwise, put center_freq just above start_freq + bandwidth/2
-        freqs = [(start_freq + fmbw2, True)]
+        first = start_freq + fmbw2
+        last = end_freq - fmbw2
 
-    # Can we get this done with just a single view?
-    if end_freq - start_freq < fmbw2:
-        return freqs
+        if last < first:
+            centres = [(start_freq + end_freq) * 0.5]
+        else:
+            centres = [
+                first + i * (last - first) / float(num_views - 1)
+                for i in range(num_views)
+            ]
 
-    # Otherwise, let's figure out how many views we need after the first one
-    num_views = int(ceil((end_freq - start_freq)/fmbw2 - 1))
-    freqs += [(start_freq + fmbw2 - bin_width + idx*fmbw2, False) for idx in range(num_views)]
+    # Clamp LO centres to actual tuning limits.  Coverage outside the tuning
+    # range may still be available through the FFT sideband of an edge tuning.
+    centres = [
+        builtins.min(max_tune_freq,
+                     builtins.max(min_tune_freq, centre))
+        for centre in centres
+    ]
 
-    # Return these frequencies!
-    return freqs
+    # Remove accidental duplicate centres caused by edge clamping.
+    result = []
+    for centre in centres:
+        centre = round(float(centre) / bin_width) * bin_width
+        if not result or abs(centre - result[-1]) >= bin_width * 0.5:
+            result.append(centre)
+
+    if not result:
+        raise ValueError("frequency planner produced no tunings")
+
+    return result
 
 
 
@@ -634,7 +706,8 @@ def main():
     # effective bin_width given our bandwidth and number of bins
     fmbw2 = builtins.max(bin_width, round(filter_margin*(analysis_span/2)/bin_width)*bin_width)
 
-    freqs = freq_planning(start_freq, end_freq, bin_width, fmbw2, frequency_min)
+    freqs = freq_planning(start_freq, end_freq, bin_width, fmbw2,
+                          frequency_min, frequency_max)
     num_views = len(freqs)
 
     try:
@@ -652,6 +725,21 @@ def main():
     num_buffers = int(args['--num-buffers'])
     num_samples = int(args['--num-samples'])
     num_transfers = int(args['--num-transfers'])
+
+    if num_buffers < 2:
+        sys.stderr.write("ERROR: --num-buffers must be at least 2\n")
+        return 2
+    if num_transfers < 1 or num_transfers >= num_buffers:
+        sys.stderr.write(
+            "ERROR: --num-transfers must be >= 1 and smaller than "
+            "--num-buffers\n"
+        )
+        return 2
+    if num_samples < 1024 or num_samples % 1024:
+        sys.stderr.write(
+            "ERROR: --num-samples must be a multiple of 1024 and >= 1024\n"
+        )
+        return 2
 
     # Start FFT worker pool
     num_workers = int(args['--num-workers'])
@@ -673,7 +761,7 @@ def main():
     if args['--raw-file'] or args['--sigmf-prefix']:
         from capture_io import CaptureWriter
         raw_writer = CaptureWriter(args['--raw-file'] or args['--sigmf-prefix'],
-                                   sample_rate, freqs[0][0], args['--sigmf-prefix'])
+                                   sample_rate, freqs[0], args['--sigmf-prefix'])
 
     # Timing stuffage
     start_time = time()
@@ -682,7 +770,11 @@ def main():
 
     # This is the thread that runs the stream.  So exciting, la
     def run_stream(stream):
-        stream.run()
+        try:
+            stream.run()
+        except Exception as exc:
+            rx_data['stream_error'] = exc
+            rx_data['running'] = False
 
     try:
         q_data = Queue()
@@ -699,7 +791,7 @@ def main():
 
         # Initialize device.rx.frequency, then start the stream doing its thing
         rx_data['discard_until'] = monotonic() + args['--settle-time']
-        retune_and_settle(device, freqs[0][0], args['--settle-time'])
+        retune_and_settle(device, freqs[0], args['--settle-time'])
         stream_format = getattr(bladeRF, 'FORMAT_SC16_Q11',
                                 getattr(getattr(bladeRF, 'Format', None), 'SC16_Q11', None))
         stream = device.rx.stream(rx_callback, num_buffers, stream_format,
@@ -737,7 +829,7 @@ def main():
             analysis_data = frame_batch[0] if len(frame_batch) == 1 else array(frame_batch)
             if raw_writer is not None:
                 raw_writer.write_frames(analysis_data, device.rx.frequency)
-            analysis_args = (analysis_data, args['--window-type'], freqs[freq_idx][1], device.rx.frequency, fmbw2, bin_width, start_freq, end_freq, curr_time, args['--metric'], args['--full-scale'], not args['--no-dc-notch'], args['--iq-gain'], args['--iq-phase'], args['--calibration-db'], sample_rate, args['--estimator'])
+            analysis_args = (analysis_data, args['--window-type'], False, device.rx.frequency, fmbw2, bin_width, start_freq, end_freq, curr_time, args['--metric'], args['--full-scale'], not args['--no-dc-notch'], args['--iq-gain'], args['--iq-phase'], args['--calibration-db'], sample_rate, args['--estimator'])
             pending.append(pool.apply_async(analyze_view, analysis_args))
             if len(pending) >= num_workers:
                 q_file.put(pending.pop(0).get())
@@ -748,7 +840,7 @@ def main():
             rx_data['data_idx'] = 0
             rx_data['discard_until'] = monotonic() + args['--settle-time']
             rx_data['discard_frames'] = args['--settle-frames']
-            retune_and_settle(device, freqs[freq_idx][0], args['--settle-time'])
+            retune_and_settle(device, freqs[freq_idx], args['--settle-time'])
             if freq_idx == 0:
                 curr_time = time()
 
